@@ -1,31 +1,46 @@
-# HP Screener — menu-router fixed edition
+# HP Screener — Two Menu Test Build
 
-This build fixes the grouped sidebar navigation so menu state remains deterministic on Streamlit reruns.
+This package is intentionally reduced to **two menus only** so navigation and market-data behavior can be tested before the rest of HP Screener is reintroduced.
 
-## Menu fixes
+## Menus
 
-- Sidebar buttons now use an explicit click -> route state -> `st.rerun()` flow instead of callback-only navigation.
-- The app no longer uses global `st.stop()` calls for missing Yahoo/CSV data.
-- Data-dependent pages remain navigable and show a clear Market Data Required state when no prices are loaded.
-- Independent pages remain fully usable without market data: HP Desk, Stock Universe, Trading Journal, Risk Calculator, Average Price, Saved Screens.
-- A `Use Demo data now` action is available from gated market pages.
-- Watchlist/chart/screener shortcuts continue to route through the same central page state.
+1. **Dashboard**
+   - Opens by default.
+   - Fetches **BBCA.JK** automatically from Yahoo Finance.
+   - Search accepts a four-character IDX ticker with or without `.JK` (for example `ISAT` or `ISAT.JK`).
+   - 1M / 3M / 6M / 1Y chart windows.
+   - Details toggles a recent-bars table.
+   - Market button opens Market Overview.
 
-## Deploy
+2. **Market Overview**
+   - TradingView IDX sector heatmap loads independently in the right panel.
+   - Yahoo Quality 200 breadth/activity is optional and loads only when **Load Quality 200** is clicked.
+   - VALUE / VOLUME / BREADTH modes.
+   - Yahoo data is not mislabeled as foreign-flow data.
 
-Upload the *contents* of this folder to the root of the GitHub repository. Keep `app.py` as the Streamlit entrypoint.
+## Deploy to Streamlit Community Cloud
 
-Required root files include `app.py`, `ui.py`, `style.css`, `market.py`, `yahoo.py`, `yahoo_download.py`, `idx_quality_200.csv`, and `requirements.txt`.
+Upload the **contents of this folder** to the root of one GitHub repository. The repository root must contain `app.py` directly.
 
-Run the package check locally with:
+Use:
 
-```bash
-python deploy_check.py
-```
+- Branch: `main`
+- Main file path: `app.py`
+- Recommended Python: 3.12
 
-Start locally with:
+Then deploy. This build does not require secrets or API keys.
+
+## Local test
 
 ```bash
 python -m pip install -r requirements.txt
-python -m streamlit run app.py
+python deploy_check.py
+streamlit run app.py
 ```
+
+## Notes
+
+- Yahoo Finance is an unofficial source through `yfinance`; rate limits or temporary provider failures can occur.
+- The Dashboard catches a Yahoo failure and keeps the app/navigation alive.
+- TradingView is embedded browser-side, so its widget requires normal browser internet access.
+- The Quality 200 is the bundled HP test universe, not an official IDX index.
