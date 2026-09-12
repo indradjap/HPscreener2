@@ -178,3 +178,28 @@ div[data-testid="stSelectbox"] > div[data-baseweb="select"]{min-height:44px}
     font-size:15px!important;
   }
 }
+
+/* HPLP Lab */
+.hplp-title{font-size:31px;font-weight:760;letter-spacing:-1px;color:#15241c;margin:.2rem 0 .25rem}
+.hplp-subtitle{font-size:14px;color:#747d78;margin-bottom:18px}
+.hplp-note{border:1px solid #dfe9e3;background:#f5faf7;border-radius:12px;padding:13px 15px;color:#56675d;font-size:12px;line-height:1.5;margin-bottom:16px}
+.hplp-note b{color:#1e6b43}.hplp-section-title{font-size:18px;font-weight:740;color:#17231c;margin:2px 0 12px}
+.hplp-weight-total{font-size:12px;margin:10px 0 12px;padding:8px 10px;border-radius:9px;background:#f5f7f6;color:#647069}.hplp-weight-total.ok{background:#eff8f2;color:#25734a}.hplp-weight-total.bad{background:#fff4f3;color:#b74740}
+.hplp-empty{border:1px dashed #d5dfd9;background:#fafcfb;border-radius:12px;padding:24px;margin-top:16px;color:#69766e}.hplp-empty b{display:block;color:#213229;font-size:16px;margin-bottom:5px}.hplp-empty span{display:block;font-size:12px}
+.hplp-status{text-align:right;color:#727d76;font-size:11px;margin:5px 2px 12px}
+@media(max-width:900px){.hplp-title{font-size:27px}.hplp-subtitle{font-size:12px}.hplp-note{font-size:11px}.hplp-section-title{font-size:16px}}
+
+
+/* Stock Pick — medium-term swing ranking */
+.sp-title{font-size:34px;font-weight:760;letter-spacing:-1.2px;color:#111814;line-height:1.15;margin-top:2px}
+.sp-subtitle{font-size:15px;color:#747c78;margin-top:8px;margin-bottom:20px}
+.sp-status{font-size:12px;color:#7a847e;text-align:right;margin:4px 2px 13px}
+.sp-section-title{font-size:22px;font-weight:740;color:#17281f;letter-spacing:-.4px;margin:20px 0 4px}
+.sp-table-head{font-size:12px;color:#737d77;font-weight:720;padding:8px 4px}
+.sp-divider,.sp-row-divider{height:1px;background:#e4e9e6}.sp-row-divider{margin:8px 0}
+.sp-stock b{display:block;font-size:16px;color:#151b17}.sp-stock span{display:block;font-size:12px;color:#68736c;margin-top:3px;line-height:1.25}.sp-stock small{display:block;font-size:10px;color:#8a938e;margin-top:4px}
+.sp-score{text-align:center;font-size:24px;font-weight:780;line-height:1}.sp-score span{display:block;font-size:9px;letter-spacing:.8px;margin-top:5px}.sp-score-good{color:#178b59}.sp-score-warn{color:#b67618}.sp-score-bad{color:#c44a45}
+.sp-setup{display:inline-block;border:1px solid #dfe6e2;background:#f7faf8;border-radius:10px;padding:7px 8px;font-size:10px;font-weight:750;line-height:1.25;color:#31473a}
+.sp-chip-wrap{display:flex;flex-wrap:wrap;gap:5px}.sp-chip{display:inline-block;border:1px solid #dfe4e1;border-radius:14px;padding:4px 7px;font-size:10px;color:#4f5c54;background:#fff;white-space:nowrap}.sp-chip-good{border-color:#cfe8da;background:#f1fbf5;color:#17764c}.sp-chip-bad{border-color:#efd4d2;background:#fff6f5;color:#c44843}.sp-chip-warn{border-color:#eadfc6;background:#fffaf0;color:#9c6b18}
+.sp-risk{font-size:11px;line-height:1.6;color:#536159}.sp-risk b{color:#1e2b24}.sp-why{font-size:11px;line-height:1.45;color:#57645d;margin-bottom:6px}
+@media(max-width:800px){.sp-title{font-size:28px}.sp-subtitle{margin-bottom:14px}.sp-status{text-align:left}.sp-section-title{font-size:19px}.sp-chip{font-size:9px;padding:3px 6px}}
