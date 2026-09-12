@@ -1,11 +1,27 @@
-# HP Screener — Two Menu Auto-Heatmap Test
+# HP Screener — Two-menu IDX-corrected test
 
-This build contains only **Dashboard** and **Market Overview**.
+Minimal functional test app containing only:
 
-## Market Overview fix
+1. **Dashboard** — BBCA.JK by default, searchable single-stock Yahoo chart.
+2. **Market Overview** — official IDX investor flow + native IDX stock heatmap.
 
-The TradingView heatmap is now emitted **before** the blocking Yahoo Quality-200 download, so the browser can start it as soon as Market Overview opens.
+## What changed in Market Overview
 
-The TradingView embed now follows the official Stock Heatmap pattern more closely: `dataSource="Indonesia"`, `exchanges=[]`, empty `symbolUrl`, plus a one-time browser retry if TradingView does not inject its iframe promptly.
+The TradingView widget has been removed because an invalid/unsupported Indonesia widget datasource could silently fall back to S&P 500.
 
-Yahoo Quality 200 still auto-loads and caches for 30 minutes. Yahoo failure no longer prevents the heatmap from being created.
+### Foreign vs Domestic Net Flow
+Market Overview reads IDX Digital Statistics daily trading-by-investor buckets and derives:
+- Foreign Buy / Foreign Sell / Net Foreign
+- Domestic Buy / Domestic Sell
+- VALUE, VOLUME, and FREQUENCY views
+
+### IDX heatmap
+The heatmap is rendered natively with Plotly from IDX website endpoints:
+- latest whole-market stock summary for close/change/volume/listed shares
+- IDX stock-screener metadata for sector and market capitalization
+
+It therefore cannot display US/S&P stocks. It attempts the latest recent trading day automatically and caches successful data for 15 minutes.
+
+## Deploy
+
+Extract the ZIP and upload its *contents* to the root of a GitHub repository. Streamlit entrypoint: `app.py`.

@@ -47,3 +47,10 @@ button[kind="primary"]{background:#17834b;border-color:#17834b}
 .test-note{margin:22px 8px 0;padding:10px 11px;border-radius:9px;background:#f5f8f6;color:#77847c;font-size:10px;line-height:1.45;border:1px solid #e7ece9}
 [data-testid="stSidebar"] .brand-sub{margin-bottom:10px}
 @media(max-width:800px){[data-testid="stSidebar"]{min-width:235px;max-width:255px}}
+
+/* Market Overview v2 — official IDX flow + native IDX heatmap */
+.flow-headline{border:1px solid #e5e9e7;border-radius:11px;padding:13px 14px;margin:12px 0 14px;background:#fff;display:flex;gap:8px 17px;flex-wrap:wrap;font-size:13px;color:#66736c}
+.flow-headline>span{white-space:nowrap}.flow-headline b{font-size:15px;margin-left:3px}.flow-net{flex-basis:100%;font-size:14px}.flow-unit{font-size:11px;font-weight:750;letter-spacing:.7px;color:#66736c;margin:4px 0 -8px}
+.market-empty-large{min-height:520px;border:1px dashed #d8e2dc;background:#f8faf9;border-radius:12px;display:flex;align-items:center;justify-content:center;text-align:center;color:#6f7d75;line-height:1.6;padding:24px}
+.heat-control{border:1px solid #e4e9e6;border-radius:9px;padding:9px 11px;background:#fafcfb;margin:5px 0 7px}.heat-control span{display:block;font-size:9px;font-weight:700;letter-spacing:.9px;color:#839088}.heat-control b{display:block;font-size:13px;color:#25352c;margin-top:3px}
+@media(max-width:800px){.flow-headline{font-size:12px}.market-empty-large{min-height:300px}.heat-control b{font-size:11px}}

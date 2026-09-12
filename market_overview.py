@@ -1,330 +1,277 @@
 from __future__ import annotations
 
 import html
-from datetime import datetime
-from zoneinfo import ZoneInfo
+import math
 
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
-import streamlit.components.v1 as components
 
 
-def _fmt_large(value: float, currency: bool = False) -> str:
+def _fmt_large(value: float, *, currency: bool = False, decimals: int = 2) -> str:
     value = float(value or 0)
-    prefix = 'Rp' if currency else ''
-    abs_value = abs(value)
-    if abs_value >= 1e12:
-        return f'{prefix}{value/1e12:,.2f}T'
-    if abs_value >= 1e9:
-        return f'{prefix}{value/1e9:,.2f}B'
-    if abs_value >= 1e6:
-        return f'{prefix}{value/1e6:,.2f}M'
-    if abs_value >= 1e3:
-        return f'{prefix}{value/1e3:,.1f}K'
-    return f'{prefix}{value:,.0f}'
+    prefix = "Rp" if currency else ""
+    av = abs(value)
+    if av >= 1e12:
+        return f"{prefix}{value/1e12:,.{decimals}f}T"
+    if av >= 1e9:
+        return f"{prefix}{value/1e9:,.{decimals}f}B"
+    if av >= 1e6:
+        return f"{prefix}{value/1e6:,.{decimals}f}M"
+    if av >= 1e3:
+        return f"{prefix}{value/1e3:,.1f}K"
+    return f"{prefix}{value:,.0f}"
 
 
-def _latest_activity(prices: pd.DataFrame, results: pd.DataFrame) -> pd.DataFrame:
-    if prices is None or prices.empty or results is None or results.empty:
-        return pd.DataFrame()
-    latest = (
-        prices.sort_values(['symbol', 'date'])
-        .groupby('symbol', as_index=False)
-        .tail(1)[['symbol', 'close', 'volume', 'date']]
-        .rename(columns={'symbol': 'Symbol', 'close': 'BarClose', 'volume': 'BarVolume', 'date': 'BarDate'})
-    )
-    d = results.merge(latest, on='Symbol', how='inner')
-    d['TradedValue'] = d['BarClose'] * d['BarVolume']
-    d['Direction'] = d['ChangePct'].apply(lambda x: 'Up' if x > 0 else ('Down' if x < 0 else 'Flat'))
-    return d
+def _flow_format(value: float, mode: str) -> str:
+    if mode == "VALUE":
+        return _fmt_large(value, currency=False)
+    if mode == "VOLUME":
+        return _fmt_large(value)
+    return f"{float(value):,.0f}"
 
 
-def _activity_figure(activity: pd.DataFrame, mode: str) -> go.Figure:
-    if mode == 'VALUE':
-        up = activity.loc[activity.Direction == 'Up', 'TradedValue'].sum()
-        down = activity.loc[activity.Direction == 'Down', 'TradedValue'].sum()
-        flat = activity.loc[activity.Direction == 'Flat', 'TradedValue'].sum()
-        values = [up, down, flat]
-        names = ['Advancing', 'Declining', 'Unchanged']
-        text = [_fmt_large(v, True) for v in values]
-        y_title = 'Estimated traded value'
-    elif mode == 'VOLUME':
-        up = activity.loc[activity.Direction == 'Up', 'BarVolume'].sum()
-        down = activity.loc[activity.Direction == 'Down', 'BarVolume'].sum()
-        flat = activity.loc[activity.Direction == 'Flat', 'BarVolume'].sum()
-        values = [up, down, flat]
-        names = ['Advancing', 'Declining', 'Unchanged']
-        text = [_fmt_large(v) for v in values]
-        y_title = 'Shares traded'
-    else:
-        up = int((activity.Direction == 'Up').sum())
-        down = int((activity.Direction == 'Down').sum())
-        flat = int((activity.Direction == 'Flat').sum())
-        values = [up, down, flat]
-        names = ['Advancing', 'Declining', 'Unchanged']
-        text = [f'{v:,}' for v in values]
-        y_title = 'Stocks'
-
-    colors = ['#42b883', '#e65a55', '#aab2ad']
-    fig = go.Figure(
+def _flow_figure(metric: dict[str, float], mode: str) -> go.Figure:
+    """Two columns (Foreign/Domestic), with Sell base + Buy overlay feel."""
+    f_buy, f_sell = metric["foreign_buy"], metric["foreign_sell"]
+    d_buy, d_sell = metric["domestic_buy"], metric["domestic_sell"]
+    fig = go.Figure()
+    fig.add_trace(
         go.Bar(
-            x=names,
-            y=values,
-            marker_color=colors,
-            text=text,
-            textposition='outside',
+            x=["Foreign", "Domestic"],
+            y=[f_sell, d_sell],
+            name="Sell",
+            marker_color=["#3f968c", "#453cc9"],
+            text=[f"F Sell<br><b>{_flow_format(f_sell, mode)}</b>", f"D Sell<br><b>{_flow_format(d_sell, mode)}</b>"],
+            textposition="inside",
+            insidetextanchor="start",
+            hovertemplate="%{x} Sell<br>%{y:,.0f}<extra></extra>",
+        )
+    )
+    fig.add_trace(
+        go.Bar(
+            x=["Foreign", "Domestic"],
+            y=[f_buy, d_buy],
+            name="Buy",
+            marker_color=["#5bc8bc", "#7c83e8"],
+            text=[f"F Buy<br><b>{_flow_format(f_buy, mode)}</b>", f"D Buy<br><b>{_flow_format(d_buy, mode)}</b>"],
+            textposition="outside",
             cliponaxis=False,
-            hovertemplate='%{x}<br>%{text}<extra></extra>',
+            hovertemplate="%{x} Buy<br>%{y:,.0f}<extra></extra>",
         )
     )
     fig.update_layout(
-        height=345,
-        margin=dict(l=8, r=8, t=25, b=10),
-        template='plotly_white',
+        barmode="overlay",
+        height=420,
+        margin=dict(l=5, r=5, t=38, b=15),
+        bargap=.48,
+        template="plotly_white",
         showlegend=False,
-        yaxis_title=y_title,
-        paper_bgcolor='white',
-        plot_bgcolor='white',
-        bargap=.36,
+        paper_bgcolor="white",
+        plot_bgcolor="white",
     )
-    fig.update_xaxes(showgrid=False, zeroline=False)
-    fig.update_yaxes(gridcolor='#eef1ef', zeroline=False, showticklabels=False)
+    fig.update_xaxes(showgrid=False, zeroline=False, tickfont=dict(size=12))
+    fig.update_yaxes(showticklabels=False, gridcolor="#edf0ee", zeroline=False, title=None)
     return fig
 
 
-def _render_activity_card(activity: pd.DataFrame, report: pd.DataFrame | None, fetched_at: str | None) -> None:
-    header_left, header_right = st.columns([3, 1], vertical_alignment='center')
-    with header_left:
-        st.markdown('<div class="market-card-title">Yahoo Market Activity</div>', unsafe_allow_html=True)
-        st.caption('Price/volume breadth from the loaded IDX universe — not foreign-flow data.')
-    with header_right:
-        if st.button('Refresh', icon=':material/refresh:', width='stretch', key='market_overview_refresh'):
-            st.session_state.pop('market_overview_bundle', None)
-            st.session_state['market_overview_refresh_requested'] = True
+def _render_flow_card(flow: dict | None, error: str | None, clear_flow_cache) -> None:
+    h1, h2 = st.columns([3.1, .9], vertical_alignment="center")
+    with h1:
+        st.markdown('<div class="market-card-title">Foreign vs Domestic<br>Net Flow</div>', unsafe_allow_html=True)
+    with h2:
+        if st.button("Refresh", icon=":material/refresh:", key="refresh_idx_flow", width="stretch"):
+            clear_flow_cache()
             st.rerun()
 
     mode = st.segmented_control(
-        'Activity mode', ['VALUE', 'VOLUME', 'BREADTH'], default='VALUE',
-        label_visibility='collapsed', key='market_activity_mode'
-    ) or 'VALUE'
+        "Flow metric", ["VALUE", "VOLUME", "FREQUENCY"], default="VALUE",
+        key="idx_flow_mode", label_visibility="collapsed"
+    ) or "VALUE"
 
-    if activity.empty:
-        err = st.session_state.get('market_overview_error')
-        detail = html.escape(str(err)) if err else 'IDX data is still loading or no usable Yahoo rows were returned.'
+    if not flow:
+        detail = html.escape(error or "Waiting for IDX investor data.")
         st.markdown(
-            '<div class="market-empty-small"><b>IDX breadth is not available yet.</b><br>' + detail + '</div>',
+            '<div class="market-empty-small"><b>IDX investor flow unavailable.</b><br>' + detail + '</div>',
             unsafe_allow_html=True,
         )
         return
 
-    advances = int((activity.Direction == 'Up').sum())
-    declines = int((activity.Direction == 'Down').sum())
-    flats = int((activity.Direction == 'Flat').sum())
-    total = len(activity)
-    net_breadth = advances - declines
-    total_value = float(activity.TradedValue.sum())
-    up_value = float(activity.loc[activity.Direction == 'Up', 'TradedValue'].sum())
-    down_value = float(activity.loc[activity.Direction == 'Down', 'TradedValue'].sum())
+    key = {"VALUE": "value", "VOLUME": "volume", "FREQUENCY": "frequency"}[mode]
+    m = flow["metrics"][key]
+    fnet = m["foreign_net"]
+    net_label = "Net Foreign Buy" if fnet >= 0 else "Net Foreign Sell"
+    net_class = "positive" if fnet >= 0 else "negative"
+    st.markdown(
+        '<div class="flow-headline">'
+        f'<span>F Buy <b class="positive">{_flow_format(m["foreign_buy"], mode)}</b></span>'
+        f'<span>F Sell <b class="negative">{_flow_format(m["foreign_sell"], mode)}</b></span>'
+        f'<span class="flow-net">{net_label} <b class="{net_class}">{_flow_format(fnet, mode)}</b></span>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+    unit = "VALUE (IDR)" if mode == "VALUE" else ("VOLUME (SHARES)" if mode == "VOLUME" else "FREQUENCY (X)")
+    st.markdown(f'<div class="flow-unit">{unit}</div>', unsafe_allow_html=True)
+    st.plotly_chart(_flow_figure(m, mode), width="stretch", config={"displayModeBar": False})
+    st.caption(f'IDX Digital Statistics · trading date {flow["date"]}')
 
-    k1, k2, k3 = st.columns(3)
-    k1.markdown(f'<div class="market-mini"><span>ADVANCING</span><b class="positive">{advances}</b></div>', unsafe_allow_html=True)
-    k2.markdown(f'<div class="market-mini"><span>DECLINING</span><b class="negative">{declines}</b></div>', unsafe_allow_html=True)
-    k3.markdown(f'<div class="market-mini"><span>NET BREADTH</span><b>{net_breadth:+d}</b></div>', unsafe_allow_html=True)
 
-    st.plotly_chart(_activity_figure(activity, mode), width='stretch', config={'displayModeBar': False})
+def _heatmap_figure(d: pd.DataFrame) -> go.Figure:
+    d = d.copy()
+    d["Sector"] = d["Sector"].fillna("Other IDX").astype(str)
+    d["Company"] = d["Company"].fillna(d["Symbol"]).astype(str)
+    d = d[d.MarketCap > 0].copy()
 
-    if mode == 'VALUE':
+    ids = ["IDX"]
+    labels = ["IDX"]
+    parents = [""]
+    values = [float(d.MarketCap.sum())]
+    colors = [0.0]
+    texts = [f"{len(d)} stocks"]
+    custom = [["IDX", "", 0.0, 0.0, 0.0]]
+
+    for sector, g in d.groupby("Sector", sort=True):
+        sec_id = "sector:" + sector
+        sec_value = float(g.MarketCap.sum())
+        weighted = float((g.ColorChange * g.MarketCap).sum() / sec_value) if sec_value else 0.0
+        ids.append(sec_id)
+        labels.append(sector)
+        parents.append("IDX")
+        values.append(sec_value)
+        colors.append(weighted)
+        texts.append(f"{len(g)} stocks")
+        custom.append(["Sector", sector, weighted, 0.0, sec_value])
+        for _, r in g.iterrows():
+            pct = float(r.ChangePct)
+            ids.append("stock:" + str(r.Symbol))
+            labels.append(str(r.Symbol))
+            parents.append(sec_id)
+            values.append(float(r.MarketCap))
+            colors.append(float(r.ColorChange))
+            texts.append(f"{pct:+.2f}%")
+            custom.append([str(r.Company), sector, pct, float(r.Close), float(r.MarketCap)])
+
+    colorscale = [
+        [0.00, "#8f1d1d"],
+        [0.22, "#d93f43"],
+        [0.42, "#ed8a8b"],
+        [0.50, "#c8cdca"],
+        [0.58, "#7cc796"],
+        [0.78, "#3f9e5d"],
+        [1.00, "#1f6336"],
+    ]
+    fig = go.Figure(
+        go.Treemap(
+            ids=ids,
+            labels=labels,
+            parents=parents,
+            values=values,
+            branchvalues="total",
+            marker=dict(
+                colors=colors,
+                colorscale=colorscale,
+                cmin=-7,
+                cmid=0,
+                cmax=7,
+                line=dict(color="white", width=1.1),
+                colorbar=dict(title="1D %", thickness=12, len=.65, x=1.01),
+            ),
+            text=texts,
+            texttemplate="<b>%{label}</b><br>%{text}",
+            customdata=custom,
+            hovertemplate=(
+                "<b>%{label}</b><br>%{customdata[0]}<br>"
+                "Sector: %{customdata[1]}<br>Change 1D: %{customdata[2]:+.2f}%<br>"
+                "Close: %{customdata[3]:,.0f}<br>Market cap: Rp%{customdata[4]:,.0f}<extra></extra>"
+            ),
+            tiling=dict(packing="squarify", pad=1),
+            pathbar=dict(visible=True, thickness=22),
+            root_color="#f4f6f5",
+            maxdepth=2,
+        )
+    )
+    fig.update_layout(
+        height=680,
+        margin=dict(l=0, r=15, t=5, b=0),
+        paper_bgcolor="white",
+        font=dict(family="Arial, sans-serif", size=12, color="#17281f"),
+    )
+    return fig
+
+
+def _render_heatmap_card(heatmap: pd.DataFrame | None, note: str | None, error: str | None, clear_market_cache) -> None:
+    h1, h2 = st.columns([3.3, .7], vertical_alignment="center")
+    with h1:
+        st.markdown('<div class="market-card-title">IDX Sectoral Heatmap</div>', unsafe_allow_html=True)
+        st.caption('All available IDX stocks · size by market cap · color by 1D change · grouped by IDX sector')
+    with h2:
+        if st.button("Refresh", icon=":material/refresh:", key="refresh_idx_heatmap", width="stretch"):
+            clear_market_cache()
+            st.rerun()
+
+    if heatmap is None or heatmap.empty:
+        detail = html.escape(error or "Waiting for IDX stock summary.")
         st.markdown(
-            f'<div class="market-summary-line"><span>Total value <b>{_fmt_large(total_value, True)}</b></span>'
-            f'<span class="positive">Up {_fmt_large(up_value, True)}</span>'
-            f'<span class="negative">Down {_fmt_large(down_value, True)}</span></div>',
+            '<div class="market-empty-large"><b>IDX heatmap unavailable.</b><br>' + detail + '</div>',
             unsafe_allow_html=True,
         )
-    else:
-        st.markdown(
-            f'<div class="market-summary-line"><span>Universe <b>{total}</b></span>'
-            f'<span>Unchanged <b>{flats}</b></span></div>',
-            unsafe_allow_html=True,
-        )
+        return
 
-    good = int(report.Status.eq('OK').sum()) if report is not None and not report.empty and 'Status' in report else total
-    requested = len(report) if report is not None and not report.empty else total
-    stamp = fetched_at or ''
-    st.caption(f'Yahoo Finance · {good}/{requested} usable tickers' + (f' · retrieved {stamp}' if stamp else ''))
+    a, b, c = st.columns(3)
+    a.markdown('<div class="heat-control"><span>UNIVERSE</span><b>All IDX stocks</b></div>', unsafe_allow_html=True)
+    b.markdown('<div class="heat-control"><span>SIZE BY</span><b>Market cap</b></div>', unsafe_allow_html=True)
+    c.markdown('<div class="heat-control"><span>COLOR BY</span><b>Change 1D %</b></div>', unsafe_allow_html=True)
+    st.plotly_chart(_heatmap_figure(heatmap), width="stretch", config={"displayModeBar": False})
+    st.caption((note or "Official IDX") + f" · {heatmap.Symbol.nunique()} stocks displayed")
 
 
-def _tradingview_heatmap_html() -> str:
-    """Return an eager-loading TradingView Indonesia stock heatmap embed."""
-    import json
-
-    config = {
-        'exchanges': [],
-        'dataSource': 'Indonesia',
-        'grouping': 'sector',
-        'blockSize': 'market_cap_basic',
-        'blockColor': 'change',
-        'locale': 'en',
-        'symbolUrl': '',
-        'colorTheme': 'light',
-        'hasTopBar': True,
-        'isDataSetEnabled': True,
-        'isZoomEnabled': True,
-        'hasSymbolTooltip': True,
-        'isMonoSize': False,
-        'width': '100%',
-        'height': '100%',
-    }
-    cfg = json.dumps(config)
-    return f"""<!doctype html>
-<html>
-<head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<style>
-html,body{{margin:0;padding:0;background:#fff;font-family:Arial,sans-serif;overflow:hidden;height:100%}}
-#tv-wrap{{height:650px;position:relative;background:#fff}}
-.tradingview-widget-container,.tradingview-widget-container__widget{{height:100%;width:100%}}
-#tv-status{{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#718078;font-size:13px;background:#fff;z-index:0}}
-#tv-host{{position:relative;z-index:1;height:100%;width:100%}}
-#tv-fallback{{display:none;position:absolute;left:16px;right:16px;bottom:14px;padding:10px 12px;border:1px solid #e1e8e3;border-radius:9px;background:#f7faf8;color:#56655c;font-size:12px;z-index:3}}
-#tv-fallback a{{color:#17784a;text-decoration:none;font-weight:600}}
-</style>
-</head>
-<body>
-<div id="tv-wrap">
-  <div id="tv-status">Loading Indonesia sector heatmap...</div>
-  <div id="tv-host" class="tradingview-widget-container">
-    <div class="tradingview-widget-container__widget"></div>
-  </div>
-  <div id="tv-fallback">TradingView did not initialize automatically. <a href="https://www.tradingview.com/heatmap/stock/" target="_blank" rel="noopener">Open TradingView heatmap</a></div>
-</div>
-<script>
-(function() {{
-  const host = document.getElementById('tv-host');
-  const status = document.getElementById('tv-status');
-  const fallback = document.getElementById('tv-fallback');
-  const config = {cfg};
-  let attempts = 0;
-
-  function inject() {{
-    attempts += 1;
-    host.querySelectorAll('script').forEach(el => el.remove());
-    const script = document.createElement('script');
-    script.type = 'text/javascript';
-    script.src = 'https://s3.tradingview.com/external-embedding/embed-widget-stock-heatmap.js';
-    script.async = true;
-    script.textContent = JSON.stringify(config);
-    script.onerror = function() {{
-      if (attempts < 2) setTimeout(inject, 1200);
-      else fallback.style.display = 'block';
-    }};
-    host.appendChild(script);
-  }}
-
-  function check() {{
-    const frame = host.querySelector('iframe');
-    if (frame) {{
-      status.style.display = 'none';
-      fallback.style.display = 'none';
-      return;
-    }}
-    if (attempts < 2) {{
-      inject();
-      setTimeout(check, 6500);
-    }} else {{
-      status.textContent = 'Waiting for TradingView...';
-      fallback.style.display = 'block';
-    }}
-  }}
-
-  inject();
-  setTimeout(check, 6500);
-}})();
-</script>
-</body>
-</html>"""
-
-def render_market_overview(cached_yahoo, cached_scan, quality_universe) -> None:
+def render_market_overview(cached_idx_flow, cached_idx_heatmap) -> None:
     st.markdown(
         '<div class="market-title">Market Overview</div>'
-        '<div class="market-subtitle">IDX breadth from Yahoo Finance with an embedded TradingView sector heatmap.</div>',
+        '<div class="market-subtitle">Official IDX investor flow and whole-market sector heatmap.</div>',
         unsafe_allow_html=True,
     )
 
-    # Render TradingView first. This is intentionally before any blocking Yahoo
-    # Quality-200 request so the browser starts the heatmap immediately.
-    left, right = st.columns([1.05, 2.25], gap='large')
-    with right:
-        with st.container(border=True):
-            h1, h2 = st.columns([3, 1], vertical_alignment='center')
-            with h1:
-                st.markdown('<div class="market-card-title">Sectoral Heatmap</div>', unsafe_allow_html=True)
-                st.caption('TradingView · Indonesia · size by market cap · color by 1D change · grouped by sector')
-            with h2:
-                st.markdown('<div class="market-eod-pill">IDX · EOD</div>', unsafe_allow_html=True)
-            components.html(_tradingview_heatmap_html(), height=675, scrolling=False)
-            st.caption('Heatmap starts independently before Yahoo Quality-200. TradingView lists IDX widget data as EOD.')
+    flow = None
+    flow_error = None
+    try:
+        with st.spinner("Loading IDX foreign/domestic flow…"):
+            flow = cached_idx_flow()
+    except Exception as exc:
+        flow_error = str(exc)
 
-    bundle = st.session_state.get('market_overview_bundle')
-    if bundle is None:
-        candidate = st.session_state.get('yahoo_bundle')
-        if candidate is not None:
-            try:
-                cp, cr, ct = candidate
-                if cr is not None and len(cr) >= 100 and cp is not None and not cp.empty:
-                    bundle = candidate
-            except Exception:
-                pass
+    heatmap = None
+    heatmap_note = None
+    heatmap_error = None
+    try:
+        with st.spinner("Loading latest IDX market and sector map…"):
+            heatmap, heatmap_note = cached_idx_heatmap()
+    except Exception as exc:
+        heatmap_error = str(exc)
 
-    requested_refresh = st.session_state.pop('market_overview_refresh_requested', False)
-    if requested_refresh:
-        st.session_state.pop('market_overview_bundle', None)
-        st.session_state.pop('market_overview_error', None)
+    def clear_flow():
         try:
-            cached_yahoo.clear()
+            cached_idx_flow.clear()
         except Exception:
             pass
-        bundle = None
 
-    if bundle is None and 'market_overview_error' not in st.session_state:
+    def clear_market():
         try:
-            symbols = quality_universe()
-            with left:
-                with st.spinner(f'Loading IDX market automatically · {len(symbols)} Quality 200 stocks from Yahoo...'):
-                    bundle = cached_yahoo(symbols, '1y', False, 60)
-            st.session_state['market_overview_bundle'] = bundle
-        except Exception as exc:
-            st.session_state['market_overview_error'] = str(exc)
+            cached_idx_heatmap.clear()
+        except Exception:
+            pass
 
-    activity = pd.DataFrame()
-    report = None
-    fetched_at = None
-    if bundle is not None:
-        try:
-            prices, report, fetched_at = bundle
-            if prices is not None and not prices.empty:
-                results = cached_scan(prices)
-                activity = _latest_activity(prices, results)
-        except Exception as exc:
-            st.session_state['market_overview_error'] = str(exc)
-
+    left, right = st.columns([1.02, 2.25], gap="large")
     with left:
         with st.container(border=True):
-            _render_activity_card(activity, report, fetched_at)
-        if st.session_state.get('market_overview_error') and activity.empty:
-            if st.button('Retry IDX data', icon=':material/refresh:', width='stretch', key='retry_market_overview_200'):
-                st.session_state.pop('market_overview_error', None)
-                st.session_state.pop('market_overview_bundle', None)
-                try:
-                    cached_yahoo.clear()
-                except Exception:
-                    pass
-                st.rerun()
+            _render_flow_card(flow, flow_error, clear_flow)
+    with right:
+        with st.container(border=True):
+            _render_heatmap_card(heatmap, heatmap_note, heatmap_error, clear_market)
 
     st.markdown(
-        '<div class="market-footnote"><b>Data boundary:</b> Yahoo OHLCV cannot identify foreign vs domestic investors. '
-        'Yahoo supplies the breadth/activity panel; TradingView supplies the independent sector heatmap.</div>',
+        '<div class="market-footnote"><b>Source boundary:</b> Market Overview now uses IDX data for investor-flow '
+        'and IDX market/sector metadata. TradingView has been removed from this page, so it cannot fall back to '
+        'S&amp;P 500. Dashboard remains Yahoo-based for single-stock charting.</div>',
         unsafe_allow_html=True,
     )
-

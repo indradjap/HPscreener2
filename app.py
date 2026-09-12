@@ -1,23 +1,22 @@
 import streamlit as st
 
 from dashboard import render_dashboard
-from market import scan
+from idx_official import build_idx_heatmap_dataset, fetch_latest_investor_flow
 from market_overview import render_market_overview
 from ui import apply_style, navigate, sidebar_menu
-from yahoo import fetch_universe, quality_universe
 
 st.set_page_config(page_title='HP Screener', page_icon='📈', layout='wide')
 apply_style()
 
 
-@st.cache_data(ttl=1800, show_spinner=False)
-def cached_yahoo(symbols, period='1y', include_today=False, chunk_size=60):
-    return fetch_universe(symbols, period, include_today, chunk_size)
+@st.cache_data(ttl=900, show_spinner=False)
+def cached_idx_flow():
+    return fetch_latest_investor_flow()
 
 
-@st.cache_data(show_spinner=False)
-def cached_scan(prices):
-    return scan(prices)
+@st.cache_data(ttl=900, show_spinner=False)
+def cached_idx_heatmap():
+    return build_idx_heatmap_dataset()
 
 
 with st.sidebar:
@@ -26,4 +25,4 @@ with st.sidebar:
 if section == 'Dashboard':
     render_dashboard(navigate=navigate)
 elif section == 'Market Overview':
-    render_market_overview(cached_yahoo, cached_scan, quality_universe)
+    render_market_overview(cached_idx_flow, cached_idx_heatmap)
