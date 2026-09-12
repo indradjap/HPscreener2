@@ -1,12 +1,13 @@
 import unittest
 import numpy as np
+import pandas as pd
 from streamlit.testing.v1 import AppTest
 from market import demo, parse_csv, indicators, scan, position_size
 
 class MarketTests(unittest.TestCase):
     def test_import(self):
         d=demo(); self.assertEqual(len(parse_csv(d.to_csv(index=False).encode())),len(d))
-        for bad in [d.iloc[:5], d._append(d.iloc[:1])]:
+        for bad in [d.iloc[:5], pd.concat([d, d.iloc[:1]], ignore_index=True)]:
             with self.assertRaises(ValueError): parse_csv(bad.to_csv(index=False).encode())
         d.loc[0,'high']=1
         with self.assertRaises(ValueError): parse_csv(d.to_csv(index=False).encode())
