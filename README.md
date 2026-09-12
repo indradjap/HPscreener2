@@ -79,3 +79,10 @@ Backtest outputs include forward return, MFE, MAE, +5% before -3%, score buckets
 HPLP v0.2 keeps v0.1 available as a benchmark, but changes the default research model to a more directional pressure score. It adds 10-day close pressure, 20-day signed up/down-volume pressure, and a price-impact absorption factor designed to favor strong activity with positive volume pressure before full price expansion. Relative volume is deliberately reduced to a 5% default weight.
 
 Backtest validation now includes same-date universe excess return, beat-universe rate, HPLP 80–100 minus 0–20 forward-return spread, positive spread days, and daily Spearman Rank IC. These metrics test whether HPLP has cross-sectional ranking power even when the overall market is weak.
+
+
+## HPLP Lab v0.3
+
+v0.3 separates **HPLP Pressure** from **Technical Confirmation**. Pressure uses the v0.2 directional liquidity model. Confirmation is a 0–100 score using only contemporaneous/past data: close above MA20, rising MA20, improving MACD histogram, 20D breakout, close above 20D VWAP, relative-volume confirmation and RSI 50–70.
+
+The lab automatically compares four setups on the same dataset: HPLP High Score, Bullish HPLP Divergence, HPLP + Confirmation, and HPLP Divergence + Confirmation. This is intended to test whether confirmation improves forward return, excess return, win rate and path quality before any rule is promoted to the live screener.

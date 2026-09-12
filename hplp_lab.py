@@ -28,6 +28,15 @@ FORMULA_FACTORS = {
         "UpDownVolume": "Up/down volume pressure",
         "Absorption": "Price-impact absorption",
     },
+    "HPLP v0.3 Pressure + Confirmation": {
+        "CMF": "CMF / signed flow",
+        "OBVSlope": "OBV slope",
+        "ValueAccel": "Value acceleration",
+        "RelVolume": "Relative volume",
+        "ClosePressure": "Close pressure",
+        "UpDownVolume": "Up/down volume pressure",
+        "Absorption": "Price-impact absorption",
+    },
 }
 
 DEFAULT_WEIGHTS = {
@@ -47,7 +56,17 @@ DEFAULT_WEIGHTS = {
         "UpDownVolume": 15.0,
         "Absorption": 15.0,
     },
+    "HPLP v0.3 Pressure + Confirmation": {
+        "CMF": 25.0,
+        "OBVSlope": 15.0,
+        "ValueAccel": 10.0,
+        "RelVolume": 5.0,
+        "ClosePressure": 15.0,
+        "UpDownVolume": 15.0,
+        "Absorption": 15.0,
+    },
 }
+
 
 
 def _quality_universe() -> tuple[str, ...]:
@@ -102,8 +121,8 @@ def _ticker_features(symbol: str, raw: pd.DataFrame) -> pd.DataFrame:
     if len(d) < 90:
         return pd.DataFrame()
 
-    for c in need:
-        d[c] = pd.to_numeric(d[c], errors="coerce")
+    for col in need:
+        d[col] = pd.to_numeric(d[col], errors="coerce")
     d = d.dropna()
     d = d[(d.Close > 0) & (d.Volume >= 0)].copy()
     if len(d) < 90:
@@ -116,13 +135,12 @@ def _ticker_features(symbol: str, raw: pd.DataFrame) -> pd.DataFrame:
     v = d.Volume.astype(float)
     value = c * v
 
-    # CMF: volume-weighted close location; positive means closes skew toward highs.
+    # ----- HPLP pressure factors (information available on each signal date only) -----
     spread = (h - l).replace(0, np.nan)
     daily_clv = ((((c - l) - (h - c)) / spread).replace([np.inf, -np.inf], np.nan).fillna(0.0))
     mfv = daily_clv * v
     d["CMF"] = mfv.rolling(20).sum() / v.rolling(20).sum().replace(0, np.nan)
 
-    # OBV slope normalized by typical 20D volume so cross-ticker ranking is more stable.
     direction = np.sign(c.diff()).fillna(0.0)
     obv = (direction * v).cumsum()
     volume_base = v.rolling(20).mean().replace(0, np.nan)
@@ -136,29 +154,63 @@ def _ticker_features(symbol: str, raw: pd.DataFrame) -> pd.DataFrame:
     prior_avg_vol20 = v.shift(1).rolling(20).mean().replace(0, np.nan)
     d["RelVolume"] = v / prior_avg_vol20
 
-    # v0.1 factor: current close location inside the trailing 20D range.
     lo20 = l.rolling(20).min()
     hi20 = h.rolling(20).max()
     d["CloseLocation"] = (c - lo20) / (hi20 - lo20).replace(0, np.nan)
-
-    # v0.2 directional factor: persistent closing pressure, not just one-day activity.
     d["ClosePressure"] = daily_clv.rolling(10).mean()
 
-    # v0.2 directional factor: 20D up-volume minus down-volume, normalized by total volume.
     signed_volume = np.sign(c.diff()).fillna(0.0) * v
-    d["UpDownVolume"] = (
-        signed_volume.rolling(20).sum()
-        / v.rolling(20).sum().replace(0, np.nan)
-    )
+    d["UpDownVolume"] = signed_volume.rolling(20).sum() / v.rolling(20).sum().replace(0, np.nan)
 
-    # v0.2 absorption factor: high recent activity + positive volume pressure + limited 5D price impact.
-    # High values aim to capture buying absorption before full price expansion.
     ret5_abs_pct = ((c / c.shift(5) - 1.0).abs() * 100.0)
     positive_pressure = ((d["UpDownVolume"].clip(-1, 1) + 1.0) / 2.0).clip(0, 1)
     d["Absorption"] = (
         activity_ratio.clip(lower=0.0)
         * positive_pressure
         / (1.0 + ret5_abs_pct / 5.0)
+    )
+
+    # ----- Independent technical confirmation layer -----
+    ma20 = c.rolling(20).mean()
+    d["MA20"] = ma20
+    d["MA20Slope5"] = (ma20 / ma20.shift(5) - 1.0) * 100.0
+
+    ema12 = c.ewm(span=12, adjust=False, min_periods=12).mean()
+    ema26 = c.ewm(span=26, adjust=False, min_periods=26).mean()
+    macd = ema12 - ema26
+    macd_signal = macd.ewm(span=9, adjust=False, min_periods=9).mean()
+    macd_hist = macd - macd_signal
+    d["MACDHist"] = macd_hist
+    d["MACDHistDelta5"] = macd_hist - macd_hist.shift(5)
+
+    typical = (h + l + c) / 3.0
+    vwap20 = (typical * v).rolling(20).sum() / v.rolling(20).sum().replace(0, np.nan)
+    d["VWAP20"] = vwap20
+
+    delta = c.diff()
+    gain = delta.clip(lower=0).rolling(14).mean()
+    loss = (-delta.clip(upper=0)).rolling(14).mean()
+    rs = gain / loss.replace(0, np.nan)
+    d["RSI14"] = 100.0 - (100.0 / (1.0 + rs))
+
+    prior_high20 = h.shift(1).rolling(20).max()
+    d["Breakout20"] = c > prior_high20
+    d["AboveMA20"] = c > ma20
+    d["MA20Rising"] = d["MA20Slope5"] > 0
+    d["MACDImproving"] = d["MACDHistDelta5"] > 0
+    d["AboveVWAP20"] = c > vwap20
+    d["VolumeConfirm"] = d["RelVolume"] >= 1.2
+    d["RSIConfirm"] = d["RSI14"].between(50, 70, inclusive="both")
+
+    # 0-100 confirmation score. Deliberately separate from HPLP pressure score.
+    d["ConfirmationScore"] = (
+        d["AboveMA20"].astype(float) * 20.0
+        + d["MA20Rising"].astype(float) * 15.0
+        + d["MACDImproving"].astype(float) * 15.0
+        + d["Breakout20"].astype(float) * 20.0
+        + d["AboveVWAP20"].astype(float) * 15.0
+        + d["VolumeConfirm"].astype(float) * 10.0
+        + d["RSIConfirm"].astype(float) * 5.0
     )
 
     d["AvgValueB"] = avg20_value / 1e9
@@ -296,6 +348,78 @@ def _cross_section_validation(eligible: pd.DataFrame) -> tuple[pd.DataFrame, pd.
     return spread, yearly_spread, ic_df
 
 
+def _signal_mask(
+    d: pd.DataFrame,
+    signal_type: str,
+    *,
+    threshold: float,
+    confirmation_threshold: float,
+    max_price_return: float,
+    min_hplp_rise: float,
+) -> pd.Series:
+    high = d.HPLP >= float(threshold)
+    divergence = (
+        high
+        & (d.Return20 <= float(max_price_return))
+        & (d.HPLPDelta5 >= float(min_hplp_rise))
+    )
+    confirmed = d.ConfirmationScore >= float(confirmation_threshold)
+
+    if signal_type == "HPLP High Score":
+        return high
+    if signal_type == "Bullish HPLP Divergence":
+        return divergence
+    if signal_type == "HPLP + Confirmation":
+        return high & confirmed
+    if signal_type == "HPLP Divergence + Confirmation":
+        # Directional guardrails help reject high-activity distribution setups.
+        return divergence & confirmed & (d.CMF > 0) & (d.OBVSlope > 0)
+    raise ValueError(f"Unknown HPLP setup: {signal_type}")
+
+
+def _comparison_table(
+    d: pd.DataFrame,
+    *,
+    threshold: float,
+    confirmation_threshold: float,
+    max_price_return: float,
+    min_hplp_rise: float,
+    horizon: int,
+    dedupe: bool,
+) -> pd.DataFrame:
+    rows = []
+    setups = [
+        "HPLP High Score",
+        "Bullish HPLP Divergence",
+        "HPLP + Confirmation",
+        "HPLP Divergence + Confirmation",
+    ]
+    for setup in setups:
+        mask = _signal_mask(
+            d, setup,
+            threshold=threshold,
+            confirmation_threshold=confirmation_threshold,
+            max_price_return=max_price_return,
+            min_hplp_rise=min_hplp_rise,
+        )
+        sig = d[mask & d.ForwardReturn.notna()].copy()
+        if dedupe and not sig.empty:
+            sig = _dedupe_signals(sig, horizon)
+        hit = sig.Hit5Before3.dropna() if not sig.empty else pd.Series(dtype=float)
+        rows.append({
+            "Setup": setup,
+            "Signals": len(sig),
+            "MedianReturn": sig.ForwardReturn.median() if len(sig) else np.nan,
+            "MedianExcess": sig.ExcessReturn.median() if len(sig) else np.nan,
+            "WinRate": (sig.ForwardReturn > 0).mean() * 100 if len(sig) else np.nan,
+            "BeatUniverse": (sig.ExcessReturn > 0).mean() * 100 if len(sig) else np.nan,
+            "Hit5Before3": hit.mean() * 100 if len(hit) else np.nan,
+            "MedianMFE": sig.MFE.median() if len(sig) else np.nan,
+            "MedianMAE": sig.MAE.median() if len(sig) else np.nan,
+        })
+    return pd.DataFrame(rows)
+
+
 def _build_backtest(
     frames: dict,
     *,
@@ -304,10 +428,11 @@ def _build_backtest(
     horizon: int,
     signal_type: str,
     threshold: float,
+    confirmation_threshold: float,
     max_price_return: float,
     min_hplp_rise: float,
     dedupe: bool,
-) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     parts = []
     for yahoo_symbol, raw in frames.items():
         symbol = str(yahoo_symbol).replace(".JK", "")
@@ -320,7 +445,7 @@ def _build_backtest(
     d = pd.concat(parts, ignore_index=True)
     d = d[d.AvgValueB >= float(min_value_b)].copy()
     factor_cols = [f for f, w in weights.items() if float(w) > 0]
-    d = d.dropna(subset=factor_cols + ["Return20", "AvgValueB"])
+    d = d.dropna(subset=factor_cols + ["Return20", "AvgValueB", "ConfirmationScore"])
     if d.empty:
         raise ValueError("No historical rows remain after liquidity/feature filters.")
 
@@ -330,23 +455,29 @@ def _build_backtest(
         forward_parts.append(_forward_metrics(g, horizon))
     d = pd.concat(forward_parts, ignore_index=True)
 
-    # Evaluation benchmark: median forward return of all eligible names on the same date.
-    # This is used only for evaluation after the signal date; it is not part of the HPLP score.
     d["BenchmarkReturn"] = d.groupby("Date")["ForwardReturn"].transform("median")
     d["ExcessReturn"] = d["ForwardReturn"] - d["BenchmarkReturn"]
 
-    if signal_type == "Bullish HPLP Divergence":
-        mask = (
-            (d.HPLP >= float(threshold))
-            & (d.Return20 <= float(max_price_return))
-            & (d.HPLPDelta5 >= float(min_hplp_rise))
-        )
-    else:
-        mask = d.HPLP >= float(threshold)
-
+    mask = _signal_mask(
+        d, signal_type,
+        threshold=threshold,
+        confirmation_threshold=confirmation_threshold,
+        max_price_return=max_price_return,
+        min_hplp_rise=min_hplp_rise,
+    )
     signals = d[mask & d.ForwardReturn.notna()].copy()
     if dedupe and not signals.empty:
         signals = _dedupe_signals(signals, horizon)
+
+    comparison = _comparison_table(
+        d,
+        threshold=threshold,
+        confirmation_threshold=confirmation_threshold,
+        max_price_return=max_price_return,
+        min_hplp_rise=min_hplp_rise,
+        horizon=horizon,
+        dedupe=dedupe,
+    )
 
     bins = [-0.001, 20, 40, 60, 80, 100.001]
     labels = ["0–20", "20–40", "40–60", "60–80", "80–100"]
@@ -389,7 +520,7 @@ def _build_backtest(
         )
 
     spread, yearly_spread, ic_df = _cross_section_validation(eligible)
-    return d, signals, bucket, yearly, spread, yearly_spread, ic_df
+    return d, signals, bucket, yearly, spread, yearly_spread, ic_df, comparison
 
 def _bucket_chart(bucket: pd.DataFrame, horizon: int) -> go.Figure:
     fig = go.Figure()
@@ -444,8 +575,9 @@ def render_hplp_lab() -> None:
     )
 
     st.markdown(
-        '<div class="hplp-note"><b>HPLP v0.2 Directional</b> is designed to reduce the v0.1 activity/volatility bias. '
-        'It adds directional up/down-volume pressure and a price-impact absorption factor. Foreign Intensity remains disabled for long-history tests until a reliable historical IDX foreign archive is available.</div>',
+        '<div class="hplp-note"><b>HPLP v0.3 Pressure + Confirmation</b> separates accumulation pressure from entry timing. '
+        'Pressure keeps the v0.2 directional model; Confirmation independently scores MA20 structure, MACD improvement, breakout, VWAP, volume confirmation and RSI. '
+        'Foreign Intensity remains disabled for long-history tests until a reliable historical IDX foreign archive is available.</div>',
         unsafe_allow_html=True,
     )
 
@@ -453,7 +585,7 @@ def render_hplp_lab() -> None:
         st.markdown('<div class="hplp-section-title">Backtest setup</div>', unsafe_allow_html=True)
         a, b, c, d = st.columns(4)
         version = a.selectbox(
-            "Formula", ["HPLP v0.2 Directional", "HPLP v0.1 Core"],
+            "Formula", ["HPLP v0.3 Pressure + Confirmation", "HPLP v0.2 Directional", "HPLP v0.1 Core"],
             index=0, key="hplp_version"
         )
         universe = b.selectbox("Universe", ["Quality 200", "All IDX (current liquid)"], key="hplp_universe")
@@ -462,17 +594,26 @@ def render_hplp_lab() -> None:
 
         e, f, g, h = st.columns(4)
         min_value = e.number_input("Min avg value (Rp B/day)", min_value=0.0, max_value=10000.0, value=0.5, step=0.5, key="hplp_min_value")
-        signal_type = f.selectbox("Signal", ["HPLP High Score", "Bullish HPLP Divergence"], index=1, key="hplp_signal")
+        signal_type = f.selectbox("Signal", ["HPLP High Score", "Bullish HPLP Divergence", "HPLP + Confirmation", "HPLP Divergence + Confirmation"], index=3, key="hplp_signal")
         threshold = g.slider("HPLP threshold", min_value=50, max_value=95, value=70, step=5, key="hplp_threshold")
-        dedupe = h.checkbox("De-duplicate signals", value=True, help="Count a ticker again only after the selected forward horizon has passed.", key="hplp_dedupe")
+        confirmation_threshold = h.slider("Confirmation threshold", min_value=0, max_value=100, value=60, step=5, key="hplp_confirmation_threshold")
 
-        if signal_type == "Bullish HPLP Divergence":
-            i, j = st.columns(2)
-            max_price_return = i.slider("Max 20D price return", min_value=-20, max_value=15, value=3, step=1, key="hplp_max_return")
-            min_hplp_rise = j.slider("Min HPLP rise vs 5 bars ago", min_value=0, max_value=40, value=10, step=5, key="hplp_min_rise")
-        else:
-            max_price_return = 100.0
-            min_hplp_rise = -100.0
+        i, j, k = st.columns([1, 1, 1])
+        dedupe = i.checkbox("De-duplicate signals", value=True, help="Count a ticker again only after the selected forward horizon has passed.", key="hplp_dedupe")
+        max_price_return = j.slider(
+            "Divergence: max 20D price return", min_value=-20, max_value=15,
+            value=3, step=1, key="hplp_max_return",
+            help="Used by both divergence setups and by the automatic four-setup comparison."
+        )
+        min_hplp_rise = k.slider(
+            "Divergence: min HPLP rise Δ5", min_value=0, max_value=40,
+            value=10, step=5, key="hplp_min_rise",
+            help="Used by both divergence setups and by the automatic four-setup comparison."
+        )
+        st.caption(
+            "Confirmation 0–100 = Above MA20 (20) + MA20 rising (15) + MACD improving (15) + "
+            "20D breakout (20) + Above VWAP20 (15) + Relative volume ≥1.2× (10) + RSI 50–70 (5)."
+        )
 
     with st.container(border=True):
         st.markdown('<div class="hplp-section-title">Formula weights</div>', unsafe_allow_html=True)
@@ -512,7 +653,7 @@ def render_hplp_lab() -> None:
                 "RelVolume": float(relvol_w),
             }
             st.caption(
-                "v0.2 factors: Close Pressure = 10D average daily close-location pressure; "
+                "Directional pressure factors: Close Pressure = 10D average daily close-location pressure; "
                 "Up/Down Volume = 20D signed volume balance; Absorption = recent traded-value activity × positive volume pressure ÷ 5D price impact."
             )
 
@@ -546,13 +687,14 @@ def render_hplp_lab() -> None:
 
             frames, errors = _cached_history(symbols, period_code)
             try:
-                _, signals, bucket, yearly, spread, yearly_spread, ic_df = _build_backtest(
+                _, signals, bucket, yearly, spread, yearly_spread, ic_df, comparison = _build_backtest(
                     frames,
                     weights=weights,
                     min_value_b=float(min_value),
                     horizon=horizon,
                     signal_type=signal_type,
                     threshold=float(threshold),
+                    confirmation_threshold=float(confirmation_threshold),
                     max_price_return=float(max_price_return),
                     min_hplp_rise=float(min_hplp_rise),
                     dedupe=bool(dedupe),
@@ -563,10 +705,10 @@ def render_hplp_lab() -> None:
 
         st.session_state["hplp_lab_result"] = {
             "signals": signals, "bucket": bucket, "yearly": yearly,
-            "spread": spread, "yearly_spread": yearly_spread, "ic_df": ic_df,
+            "spread": spread, "yearly_spread": yearly_spread, "ic_df": ic_df, "comparison": comparison,
             "horizon": horizon, "universe": universe,
             "requested": len(symbols), "usable": len(frames), "failed": len(errors),
-            "history": period, "signal_type": signal_type, "threshold": threshold,
+            "history": period, "signal_type": signal_type, "threshold": threshold, "confirmation_threshold": confirmation_threshold,
             "min_value": min_value, "weights": weights.copy(), "version": version,
             "universe_status": universe_status,
         }
@@ -574,8 +716,8 @@ def render_hplp_lab() -> None:
     bundle = st.session_state.get("hplp_lab_result")
     if bundle is None:
         st.markdown(
-            '<div class="hplp-empty"><b>Ready to test HPLP v0.2.</b>'
-            '<span>Run v0.2 first, then compare the same setup with v0.1. The lab does not change the live Smart Money Screener.</span></div>',
+            '<div class="hplp-empty"><b>Ready to test HPLP v0.3.</b>'
+            '<span>Run v0.3 first, then use the automatic four-setup comparison to locate the edge. The lab does not change the live Smart Money Screener.</span></div>',
             unsafe_allow_html=True,
         )
         return
@@ -586,13 +728,14 @@ def render_hplp_lab() -> None:
     spread = bundle.get("spread", pd.DataFrame())
     yearly_spread = bundle.get("yearly_spread", pd.DataFrame())
     ic_df = bundle.get("ic_df", pd.DataFrame())
+    comparison = bundle.get("comparison", pd.DataFrame())
     horizon = int(bundle["horizon"])
     result_universe = bundle["universe"]
     result_version = bundle.get("version", "HPLP")
 
     st.markdown(
         f'<div class="hplp-status">Last run · {result_version} · {result_universe} · {bundle["history"]} history · '
-        f'HPLP ≥ {bundle["threshold"]} · <b>{bundle["requested"]}</b> requested · '
+        f'{bundle.get("signal_type", "HPLP")} · HPLP ≥ {bundle["threshold"]} · Confirmation ≥ {bundle.get("confirmation_threshold", 0)} · <b>{bundle["requested"]}</b> requested · '
         f'<b>{bundle["usable"]}</b> Yahoo histories usable · <b>{bundle["failed"]}</b> failed</div>',
         unsafe_allow_html=True,
     )
@@ -635,7 +778,25 @@ def render_hplp_lab() -> None:
         )
 
     with st.container(border=True):
-        st.markdown('<div class="hplp-section-title">Does a higher HPLP score lead to better forward returns?</div>', unsafe_allow_html=True)
+        st.markdown('<div class="hplp-section-title">Which HPLP setup actually has the edge?</div>', unsafe_allow_html=True)
+        st.caption(
+            "All four setups use the exact same historical dataset, HPLP threshold, divergence rules and confirmation threshold. "
+            "This comparison isolates whether technical confirmation improves the pressure signal."
+        )
+        if comparison.empty:
+            st.info("No setup comparison is available for this run.")
+        else:
+            cmp = comparison.copy()
+            cmp.columns = [
+                "Setup", "Signals", f"Median {horizon}D Return %", "Median Excess %", "Win Rate %",
+                "Beat Universe %", "+5% before -3%", "Median MFE %", "Median MAE %"
+            ]
+            for col in [f"Median {horizon}D Return %", "Median Excess %", "Win Rate %", "Beat Universe %", "+5% before -3%", "Median MFE %", "Median MAE %"]:
+                cmp[col] = pd.to_numeric(cmp[col], errors="coerce").round(2)
+            st.dataframe(cmp, hide_index=True, width="stretch")
+
+    with st.container(border=True):
+        st.markdown('<div class="hplp-section-title">Does a higher HPLP pressure score lead to better forward returns?</div>', unsafe_allow_html=True)
         st.plotly_chart(_bucket_chart(bucket, horizon), width="stretch", config={"displayModeBar": False})
         display_bucket = bucket.copy()
         display_bucket.columns = [
@@ -676,21 +837,21 @@ def render_hplp_lab() -> None:
         else:
             sample = signals.sort_values(["Date", "HPLP"], ascending=[False, False]).head(100).copy()
             sample = sample[[
-                "Date", "Symbol", "HPLP", "HPLPDelta5", "Return20", "AvgValueB",
-                "ForwardReturn", "ExcessReturn", "MFE", "MAE", "Hit5Before3"
+                "Date", "Symbol", "HPLP", "ConfirmationScore", "HPLPDelta5", "Return20", "AvgValueB",
+                "AboveMA20", "Breakout20", "MACDImproving", "ForwardReturn", "ExcessReturn", "MFE", "MAE", "Hit5Before3"
             ]]
             sample.columns = [
-                "Date", "Ticker", "HPLP", "HPLP Δ5", "Price 20D %", "Avg Value RpB",
-                f"Forward {horizon}D %", "Excess vs Universe %", "MFE %", "MAE %", "+5 before -3"
+                "Date", "Ticker", "HPLP Pressure", "Confirmation", "HPLP Δ5", "Price 20D %", "Avg Value RpB",
+                "Above MA20", "20D Breakout", "MACD Improving", f"Forward {horizon}D %", "Excess vs Universe %", "MFE %", "MAE %", "+5 before -3"
             ]
             for col in [
-                "HPLP", "HPLP Δ5", "Price 20D %", "Avg Value RpB",
+                "HPLP Pressure", "Confirmation", "HPLP Δ5", "Price 20D %", "Avg Value RpB",
                 f"Forward {horizon}D %", "Excess vs Universe %", "MFE %", "MAE %"
             ]:
                 sample[col] = pd.to_numeric(sample[col], errors="coerce").round(2)
             st.dataframe(sample, hide_index=True, width="stretch", height=420)
 
     st.caption(
-        "Research notes: score factors use only information available up to each signal date. Forward return, benchmark, spread and Rank IC use later bars only for evaluation. Same-day +5% and -3% touches are excluded because daily OHLC cannot reveal intraday order. All-IDX mode remains current-listing biased."
+        "Research notes: HPLP Pressure and Confirmation use only information available up to each signal date. Confirmation is independent from the pressure score and uses MA20 structure, MACD improvement, breakout, VWAP, relative volume and RSI. Forward return, benchmark, spread and Rank IC use later bars only for evaluation. Same-day +5% and -3% touches are excluded because daily OHLC cannot reveal intraday order. All-IDX mode remains current-listing biased."
     )
 
