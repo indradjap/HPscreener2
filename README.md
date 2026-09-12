@@ -56,3 +56,19 @@ Smart Money Screener supports **Quality 200** and **All IDX**.
 
 The UI shows the full Stage-1 universe count, candidate count, and successful Yahoo
 technical count so a reduced technical set is never hidden from the user.
+
+## HPLP Lab v0.1
+
+The fourth menu is an isolated research/backtest environment for HP Liquidity Pressure.
+It does not modify Smart Money Screener signals.
+
+HPLP v0.1 Core uses five historically available Yahoo OHLCV factors:
+- CMF pressure
+- OBV slope
+- traded-value acceleration
+- relative volume
+- close location inside the 20-session range
+
+Each factor is percentile-ranked cross-sectionally on each date before applying the user-defined weights. Historical foreign intensity is intentionally excluded in v0.1 because the current official IDX integration only supplies a short recent foreign-flow history. A future HPLP+ version can add it once a defensible long archive is available.
+
+Backtest outputs include forward return, MFE, MAE, +5% before -3%, score buckets, year-by-year stability, and optional de-duplication of overlapping signals. All-IDX mode uses the current listed/liquid universe and therefore has survivorship/current-listing bias; Quality 200 is the recommended first calibration universe.

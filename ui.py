@@ -5,6 +5,7 @@ MENUS = (
     ('Dashboard', 'space_dashboard'),
     ('Market Overview', 'public'),
     ('Smart Money Screener', 'filter_alt'),
+    ('HPLP Lab', 'science'),
 )
 
 
