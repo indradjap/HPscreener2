@@ -1,27 +1,20 @@
-# HP Screener — Two-menu IDX-corrected test
+# HP Screener — Dashboard + Market Overview (TradingView-style native IDX heatmap)
 
-Minimal functional test app containing only:
+This test build keeps only **Dashboard** and **Market Overview**.
 
-1. **Dashboard** — BBCA.JK by default, searchable single-stock Yahoo chart.
-2. **Market Overview** — official IDX investor flow + native IDX stock heatmap.
+## Market Overview
+- Foreign vs Domestic Net Flow: official IDX investor data.
+- Native IDX Sectoral Heatmap: no TradingView widget and no S&P fallback.
+- Heatmap toolbar:
+  - Universe: All Indonesian companies / Quality 200
+  - Size by: Market cap / Traded value
+  - Color by: Change 1D %
+  - Group by: Sector / SubSector
+- Sector/group parents are visually separated from stock tiles.
+- Horizontal red/neutral/green legend matches the supplied reference more closely.
+- Stock hover shows company, group, 1D change, close, market cap and traded value.
 
-## What changed in Market Overview
-
-The TradingView widget has been removed because an invalid/unsupported Indonesia widget datasource could silently fall back to S&P 500.
-
-### Foreign vs Domestic Net Flow
-Market Overview reads IDX Digital Statistics daily trading-by-investor buckets and derives:
-- Foreign Buy / Foreign Sell / Net Foreign
-- Domestic Buy / Domestic Sell
-- VALUE, VOLUME, and FREQUENCY views
-
-### IDX heatmap
-The heatmap is rendered natively with Plotly from IDX website endpoints:
-- latest whole-market stock summary for close/change/volume/listed shares
-- IDX stock-screener metadata for sector and market capitalization
-
-It therefore cannot display US/S&P stocks. It attempts the latest recent trading day automatically and caches successful data for 15 minutes.
+Stock logos are intentionally not fabricated. The current IDX feeds used by this build do not supply a reliable logo URL for every issuer. The tiles therefore use ticker + daily change, while company information is available on hover.
 
 ## Deploy
-
-Extract the ZIP and upload its *contents* to the root of a GitHub repository. Streamlit entrypoint: `app.py`.
+Upload the contents of this folder to the GitHub repository root and deploy `app.py` on Streamlit Community Cloud.

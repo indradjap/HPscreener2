@@ -50,7 +50,22 @@ button[kind="primary"]{background:#17834b;border-color:#17834b}
 
 /* Market Overview v2 — official IDX flow + native IDX heatmap */
 .flow-headline{border:1px solid #e5e9e7;border-radius:11px;padding:13px 14px;margin:12px 0 14px;background:#fff;display:flex;gap:8px 17px;flex-wrap:wrap;font-size:13px;color:#66736c}
-.flow-headline>span{white-space:nowrap}.flow-headline b{font-size:15px;margin-left:3px}.flow-net{flex-basis:100%;font-size:14px}.flow-unit{font-size:11px;font-weight:750;letter-spacing:.7px;color:#66736c;margin:4px 0 -8px}
+.flow-headline>span{white-space:nowrap}.flow-headline b{font-size:15px;margin-left:3px}.flow-net{flex-basis:100%;font-size:14px}.flow-unit{font-size:11px;font-weight:750;letter-spacing:.7px;color:#66736c;margin:8px 0 16px;line-height:1.35}
 .market-empty-large{min-height:520px;border:1px dashed #d8e2dc;background:#f8faf9;border-radius:12px;display:flex;align-items:center;justify-content:center;text-align:center;color:#6f7d75;line-height:1.6;padding:24px}
 .heat-control{border:1px solid #e4e9e6;border-radius:9px;padding:9px 11px;background:#fafcfb;margin:5px 0 7px}.heat-control span{display:block;font-size:9px;font-weight:700;letter-spacing:.9px;color:#839088}.heat-control b{display:block;font-size:13px;color:#25352c;margin-top:3px}
 @media(max-width:800px){.flow-headline{font-size:12px}.market-empty-large{min-height:300px}.heat-control b{font-size:11px}}
+
+/* TradingView-like native IDX treemap */
+.heat-title{font-size:22px!important;margin:4px 0 8px!important}
+.heat-toolbar-shell{border:1px solid #e0e3e1;border-bottom:0;border-radius:10px 10px 0 0;background:#fff;padding:8px 10px 3px;margin-top:7px}
+/* Streamlit selectboxes inside the heatmap toolbar */
+div[data-testid="stSelectbox"] > div > div{border-color:#e2e5e3!important;border-radius:8px!important;background:#fff!important;min-height:42px}
+div[data-testid="stSelectbox"] input{font-size:13px!important;font-weight:650!important}
+/* Remove generic Plotly card chrome only for a cleaner heatmap canvas */
+[data-testid="stPlotlyChart"]{box-shadow:none}
+.heat-legend{padding:2px 13px 4px;margin-top:-3px}
+.heat-legend-labels,.heat-legend-bars{display:grid;grid-template-columns:repeat(7,1fr);gap:3px;align-items:center}
+.heat-legend-label{font-size:11px;color:#111;text-align:center;margin-bottom:4px;white-space:nowrap}
+.heat-legend-block{height:13px;border-radius:2px}
+.heat-source{font-size:11px;color:#7a847e;padding:2px 12px 4px;text-align:right}
+@media(max-width:800px){.heat-title{font-size:19px!important}.heat-legend-label{font-size:9px}.heat-legend-block{height:10px}}

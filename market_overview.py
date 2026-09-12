@@ -63,7 +63,7 @@ def _flow_figure(metric: dict[str, float], mode: str) -> go.Figure:
     fig.update_layout(
         barmode="overlay",
         height=420,
-        margin=dict(l=5, r=5, t=38, b=15),
+        margin=dict(l=5, r=5, t=52, b=15),
         bargap=.48,
         template="plotly_white",
         showlegend=False,
@@ -116,114 +116,200 @@ def _render_flow_card(flow: dict | None, error: str | None, clear_flow_cache) ->
     st.caption(f'IDX Digital Statistics · trading date {flow["date"]}')
 
 
-def _heatmap_figure(d: pd.DataFrame) -> go.Figure:
-    d = d.copy()
-    d["Sector"] = d["Sector"].fillna("Other IDX").astype(str)
-    d["Company"] = d["Company"].fillna(d["Symbol"]).astype(str)
-    d = d[d.MarketCap > 0].copy()
+def _mix_hex(a: str, b: str, t: float) -> str:
+    """Linear RGB interpolation used for the TradingView-like heat colors."""
+    t = max(0.0, min(1.0, float(t)))
+    av = tuple(int(a[i:i+2], 16) for i in (1, 3, 5))
+    bv = tuple(int(b[i:i+2], 16) for i in (1, 3, 5))
+    rgb = tuple(round(x + (y - x) * t) for x, y in zip(av, bv))
+    return '#%02x%02x%02x' % rgb
 
-    ids = ["IDX"]
-    labels = ["IDX"]
-    parents = [""]
-    values = [float(d.MarketCap.sum())]
-    colors = [0.0]
-    texts = [f"{len(d)} stocks"]
-    custom = [["IDX", "", 0.0, 0.0, 0.0]]
 
-    for sector, g in d.groupby("Sector", sort=True):
-        sec_id = "sector:" + sector
-        sec_value = float(g.MarketCap.sum())
-        weighted = float((g.ColorChange * g.MarketCap).sum() / sec_value) if sec_value else 0.0
-        ids.append(sec_id)
-        labels.append(sector)
-        parents.append("IDX")
-        values.append(sec_value)
-        colors.append(weighted)
-        texts.append(f"{len(g)} stocks")
-        custom.append(["Sector", sector, weighted, 0.0, sec_value])
-        for _, r in g.iterrows():
-            pct = float(r.ChangePct)
-            ids.append("stock:" + str(r.Symbol))
-            labels.append(str(r.Symbol))
-            parents.append(sec_id)
-            values.append(float(r.MarketCap))
-            colors.append(float(r.ColorChange))
-            texts.append(f"{pct:+.2f}%")
-            custom.append([str(r.Company), sector, pct, float(r.Close), float(r.MarketCap)])
-
-    colorscale = [
-        [0.00, "#8f1d1d"],
-        [0.22, "#d93f43"],
-        [0.42, "#ed8a8b"],
-        [0.50, "#c8cdca"],
-        [0.58, "#7cc796"],
-        [0.78, "#3f9e5d"],
-        [1.00, "#1f6336"],
+def _heat_color(value: float) -> str:
+    """Map daily % change to a restrained red/neutral/green heat scale."""
+    v = max(-7.0, min(7.0, float(value or 0.0)))
+    stops = [
+        (-7.0, '#8f2525'),
+        (-5.5, '#a72b2b'),
+        (-3.5, '#df474a'),
+        (-1.5, '#e98284'),
+        (0.0, '#c9cdcb'),
+        (1.5, '#73bd8c'),
+        (3.5, '#45a767'),
+        (7.0, '#255f39'),
     ]
+    for (x0, c0), (x1, c1) in zip(stops, stops[1:]):
+        if x0 <= v <= x1:
+            return _mix_hex(c0, c1, (v - x0) / (x1 - x0))
+    return stops[-1][1]
+
+
+def _load_quality200() -> set[str]:
+    from pathlib import Path
+    try:
+        d = pd.read_csv(Path(__file__).with_name('idx_quality_200.csv'))
+        return set(d['Ticker'].astype(str).str.upper().str.strip())
+    except Exception:
+        return set()
+
+
+def _heatmap_figure(d: pd.DataFrame, *, size_col: str, group_col: str) -> go.Figure:
+    d = d.copy()
+    d[group_col] = d[group_col].fillna('Other IDX').replace('', 'Other IDX').astype(str)
+    d['Company'] = d['Company'].fillna(d['Symbol']).astype(str)
+    d = d[pd.to_numeric(d[size_col], errors='coerce').fillna(0) > 0].copy()
+    d[size_col] = pd.to_numeric(d[size_col], errors='coerce').fillna(0.0)
+
+    # Root + group parent nodes + stock leaf nodes. Parent nodes are deliberately
+    # white so their header band reads more like the supplied TradingView reference.
+    ids = ['IDXROOT']
+    labels = ['']
+    parents = ['']
+    values = [float(d[size_col].sum())]
+    colors = ['#ffffff']
+    display = ['']
+    custom = [['', '', 0.0, 0.0, 0.0, 0.0]]
+
+    for group, g in d.groupby(group_col, sort=False):
+        gid = 'group:' + str(group)
+        gvalue = float(g[size_col].sum())
+        ids.append(gid)
+        labels.append(str(group))
+        parents.append('IDXROOT')
+        values.append(gvalue)
+        colors.append('#ffffff')
+        display.append(f'<span style="color:#161616"><b>{html.escape(str(group))} ›</b></span>')
+        custom.append(['', str(group), 0.0, 0.0, gvalue, 0.0])
+
+        # Largest stocks first creates a more stable visual hierarchy.
+        for _, r in g.sort_values(size_col, ascending=False).iterrows():
+            pct = float(r.ChangePct)
+            sym = str(r.Symbol)
+            ids.append('stock:' + sym)
+            labels.append(sym)
+            parents.append(gid)
+            values.append(float(r[size_col]))
+            colors.append(_heat_color(pct))
+            # Ticker + % only; company and metrics stay in hover to keep tiles clean.
+            display.append(f'<span style="color:#ffffff"><b>{html.escape(sym)}</b><br>{pct:+.2f}%</span>')
+            custom.append([
+                str(r.Company), str(group), pct, float(r.Close),
+                float(r.MarketCap), float(r.get('TradedValue', 0.0))
+            ])
+
     fig = go.Figure(
         go.Treemap(
             ids=ids,
             labels=labels,
             parents=parents,
             values=values,
-            branchvalues="total",
-            marker=dict(
-                colors=colors,
-                colorscale=colorscale,
-                cmin=-7,
-                cmid=0,
-                cmax=7,
-                line=dict(color="white", width=1.1),
-                colorbar=dict(title="1D %", thickness=12, len=.65, x=1.01),
-            ),
-            text=texts,
-            texttemplate="<b>%{label}</b><br>%{text}",
+            branchvalues='total',
+            marker=dict(colors=colors, line=dict(color='#ffffff', width=1.15)),
+            text=display,
+            texttemplate='%{text}',
+            textfont=dict(size=14, color='#ffffff'),
             customdata=custom,
             hovertemplate=(
-                "<b>%{label}</b><br>%{customdata[0]}<br>"
-                "Sector: %{customdata[1]}<br>Change 1D: %{customdata[2]:+.2f}%<br>"
-                "Close: %{customdata[3]:,.0f}<br>Market cap: Rp%{customdata[4]:,.0f}<extra></extra>"
+                '<b>%{label}</b><br>%{customdata[0]}<br>'
+                f'{html.escape(group_col)}: %{{customdata[1]}}<br>'
+                'Change 1D: %{customdata[2]:+.2f}%<br>'
+                'Close: %{customdata[3]:,.0f}<br>'
+                'Market cap: Rp%{customdata[4]:,.0f}<br>'
+                'Traded value: Rp%{customdata[5]:,.0f}<extra></extra>'
             ),
-            tiling=dict(packing="squarify", pad=1),
-            pathbar=dict(visible=True, thickness=22),
-            root_color="#f4f6f5",
+            tiling=dict(packing='squarify', pad=1.4),
+            pathbar=dict(visible=False),
+            root_color='#ffffff',
             maxdepth=2,
+            sort=False,
         )
     )
     fig.update_layout(
-        height=680,
-        margin=dict(l=0, r=15, t=5, b=0),
-        paper_bgcolor="white",
-        font=dict(family="Arial, sans-serif", size=12, color="#17281f"),
+        height=655,
+        margin=dict(l=0, r=0, t=0, b=0),
+        paper_bgcolor='white',
+        plot_bgcolor='white',
+        font=dict(family='Arial, sans-serif', size=13, color='#111111'),
+        uniformtext=dict(minsize=8, mode='hide'),
     )
     return fig
 
 
+def _legend_html() -> str:
+    blocks = [
+        ('#8f2525', '−5.5%'), ('#df474a', '−3.5%'), ('#e98284', '−1.5%'),
+        ('#c9cdcb', '0%'), ('#73bd8c', '1.5%'), ('#45a767', '3.5%'), ('#255f39', '5.5%')
+    ]
+    labels = ''.join(f'<div class="heat-legend-label">{t}</div>' for _, t in blocks)
+    bars = ''.join(f'<div class="heat-legend-block" style="background:{c}"></div>' for c, _ in blocks)
+    return f'<div class="heat-legend"><div class="heat-legend-labels">{labels}</div><div class="heat-legend-bars">{bars}</div></div>'
+
+
 def _render_heatmap_card(heatmap: pd.DataFrame | None, note: str | None, error: str | None, clear_market_cache) -> None:
-    h1, h2 = st.columns([3.3, .7], vertical_alignment="center")
-    with h1:
-        st.markdown('<div class="market-card-title">IDX Sectoral Heatmap</div>', unsafe_allow_html=True)
-        st.caption('All available IDX stocks · size by market cap · color by 1D change · grouped by IDX sector')
-    with h2:
-        if st.button("Refresh", icon=":material/refresh:", key="refresh_idx_heatmap", width="stretch"):
+    top1, top2 = st.columns([4.3, .7], vertical_alignment='center')
+    with top1:
+        st.markdown('<div class="market-card-title heat-title">Sectoral Heatmap</div>', unsafe_allow_html=True)
+    with top2:
+        if st.button('Refresh', icon=':material/refresh:', key='refresh_idx_heatmap', width='stretch'):
             clear_market_cache()
             st.rerun()
 
     if heatmap is None or heatmap.empty:
-        detail = html.escape(error or "Waiting for IDX stock summary.")
+        detail = html.escape(error or 'Waiting for IDX stock summary.')
         st.markdown(
             '<div class="market-empty-large"><b>IDX heatmap unavailable.</b><br>' + detail + '</div>',
             unsafe_allow_html=True,
         )
         return
 
-    a, b, c = st.columns(3)
-    a.markdown('<div class="heat-control"><span>UNIVERSE</span><b>All IDX stocks</b></div>', unsafe_allow_html=True)
-    b.markdown('<div class="heat-control"><span>SIZE BY</span><b>Market cap</b></div>', unsafe_allow_html=True)
-    c.markdown('<div class="heat-control"><span>COLOR BY</span><b>Change 1D %</b></div>', unsafe_allow_html=True)
-    st.plotly_chart(_heatmap_figure(heatmap), width="stretch", config={"displayModeBar": False})
-    st.caption((note or "Official IDX") + f" · {heatmap.Symbol.nunique()} stocks displayed")
+    # TradingView-like toolbar, but every control is native and functional.
+    with st.container(border=True):
+        c1, c2, c3, c4 = st.columns([2.05, 1.35, 1.45, 1.25], gap='small')
+        with c1:
+            universe = st.selectbox(
+                'Universe', ['All Indonesian companies', 'Quality 200'],
+                key='heat_universe', label_visibility='collapsed'
+            )
+        with c2:
+            size_by = st.selectbox(
+                'Size by', ['Market cap', 'Traded value'],
+                key='heat_size_by', label_visibility='collapsed'
+            )
+        with c3:
+            color_by = st.selectbox(
+                'Color by', ['Change 1D, %'],
+                key='heat_color_by', label_visibility='collapsed'
+            )
+        with c4:
+            group_by = st.selectbox(
+                'Group by', ['Sector', 'SubSector'],
+                key='heat_group_by', label_visibility='collapsed'
+            )
 
+    d = heatmap.copy()
+    if universe == 'Quality 200':
+        q = _load_quality200()
+        if q:
+            d = d[d.Symbol.isin(q)].copy()
+    size_col = 'MarketCap' if size_by == 'Market cap' else 'TradedValue'
+    group_col = 'Sector' if group_by == 'Sector' else 'SubSector'
+    if group_col not in d.columns:
+        group_col = 'Sector'
+    if size_col not in d.columns or pd.to_numeric(d[size_col], errors='coerce').fillna(0).sum() <= 0:
+        size_col = 'MarketCap'
+
+    st.plotly_chart(
+        _heatmap_figure(d, size_col=size_col, group_col=group_col),
+        width='stretch',
+        config={'displayModeBar': False, 'responsive': True},
+        key='idx_sector_heatmap_plot',
+    )
+    st.markdown(_legend_html(), unsafe_allow_html=True)
+    source = note or 'Official IDX'
+    st.markdown(
+        f'<div class="heat-source"><b>{html.escape(universe)}</b> · {d.Symbol.nunique()} stocks · '
+        f'{html.escape(source)}</div>', unsafe_allow_html=True
+    )
 
 def render_market_overview(cached_idx_flow, cached_idx_heatmap) -> None:
     st.markdown(
