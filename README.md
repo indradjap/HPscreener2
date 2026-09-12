@@ -86,3 +86,27 @@ Backtest validation now includes same-date universe excess return, beat-universe
 v0.3 separates **HPLP Pressure** from **Technical Confirmation**. Pressure uses the v0.2 directional liquidity model. Confirmation is a 0–100 score using only contemporaneous/past data: close above MA20, rising MA20, improving MACD histogram, 20D breakout, close above 20D VWAP, relative-volume confirmation and RSI 50–70.
 
 The lab automatically compares four setups on the same dataset: HPLP High Score, Bullish HPLP Divergence, HPLP + Confirmation, and HPLP Divergence + Confirmation. This is intended to test whether confirmation improves forward return, excess return, win rate and path quality before any rule is promoted to the live screener.
+
+## HPLP Lab v0.4 — Pressure → Trigger Study
+
+v0.4 no longer treats a static bullish technical state as confirmation. It separates:
+
+- **Pressure date**: HPLP identifies possible accumulation pressure.
+- **Future trigger**: the first qualifying transition event within 3, 5, or 10 sessions.
+- **Entry date**: the trigger date; forward return/MFE/MAE are measured from that trigger.
+
+Trigger Score (0–100):
+- fresh MA20 reclaim: 20
+- fresh VWAP20 reclaim: 15
+- MACD histogram cross above zero: 15
+- RSI cross above 50: 10
+- 10-session pivot breakout: 20
+- relative volume >= 1.3x: 10
+- close in upper 30% of daily range: 10
+
+The lab automatically compares pressure-only entries against 3D/5D/10D trigger windows for
+both HPLP High Score and Bullish HPLP Divergence setups.
+
+Current execution assumption: entry at trigger-day close. This avoids using bars after the
+trigger for the signal itself, but a later research version should also test next-session-open
+execution for a more conservative implementation.

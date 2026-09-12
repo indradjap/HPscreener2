@@ -37,6 +37,15 @@ FORMULA_FACTORS = {
         "UpDownVolume": "Up/down volume pressure",
         "Absorption": "Price-impact absorption",
     },
+    "HPLP v0.4 Pressure → Trigger": {
+        "CMF": "CMF / signed flow",
+        "OBVSlope": "OBV slope",
+        "ValueAccel": "Value acceleration",
+        "RelVolume": "Relative volume",
+        "ClosePressure": "Close pressure",
+        "UpDownVolume": "Up/down volume pressure",
+        "Absorption": "Price-impact absorption",
+    },
 }
 
 DEFAULT_WEIGHTS = {
@@ -57,6 +66,15 @@ DEFAULT_WEIGHTS = {
         "Absorption": 15.0,
     },
     "HPLP v0.3 Pressure + Confirmation": {
+        "CMF": 25.0,
+        "OBVSlope": 15.0,
+        "ValueAccel": 10.0,
+        "RelVolume": 5.0,
+        "ClosePressure": 15.0,
+        "UpDownVolume": 15.0,
+        "Absorption": 15.0,
+    },
+    "HPLP v0.4 Pressure → Trigger": {
         "CMF": 25.0,
         "OBVSlope": 15.0,
         "ValueAccel": 10.0,
@@ -213,6 +231,33 @@ def _ticker_features(symbol: str, raw: pd.DataFrame) -> pd.DataFrame:
         + d["RSIConfirm"].astype(float) * 5.0
     )
 
+    # ----- v0.4 transition/event trigger layer -----
+    # These are events, not static bullish states. Each event is knowable using
+    # current/prior bars only. A pressure signal may wait up to N future sessions
+    # for one of these transition clusters before entry.
+    prev_above_ma20 = d["AboveMA20"].shift(1).fillna(False).astype(bool)
+    prev_above_vwap = d["AboveVWAP20"].shift(1).fillna(False).astype(bool)
+    d["MA20Reclaim"] = d["AboveMA20"] & ~prev_above_ma20
+    d["VWAPReclaim"] = d["AboveVWAP20"] & ~prev_above_vwap
+    d["MACDZeroCross"] = (d["MACDHist"] > 0) & (d["MACDHist"].shift(1) <= 0)
+    d["RSI50Cross"] = (d["RSI14"] >= 50) & (d["RSI14"].shift(1) < 50)
+
+    prior_high10 = h.shift(1).rolling(10).max()
+    d["Breakout10"] = c > prior_high10
+    d["TriggerVolume"] = d["RelVolume"] >= 1.30
+    candle_location = (c - l) / (h - l).replace(0, np.nan)
+    d["CloseUpper30"] = candle_location >= 0.70
+
+    d["TriggerScore"] = (
+        d["MA20Reclaim"].astype(float) * 20.0
+        + d["VWAPReclaim"].astype(float) * 15.0
+        + d["MACDZeroCross"].astype(float) * 15.0
+        + d["RSI50Cross"].astype(float) * 10.0
+        + d["Breakout10"].astype(float) * 20.0
+        + d["TriggerVolume"].astype(float) * 10.0
+        + d["CloseUpper30"].astype(float) * 10.0
+    )
+
     d["AvgValueB"] = avg20_value / 1e9
     d["Return20"] = (c / c.shift(20) - 1.0) * 100.0
     d["Symbol"] = symbol
@@ -348,12 +393,11 @@ def _cross_section_validation(eligible: pd.DataFrame) -> tuple[pd.DataFrame, pd.
     return spread, yearly_spread, ic_df
 
 
-def _signal_mask(
+def _pressure_mask(
     d: pd.DataFrame,
-    signal_type: str,
+    pressure_type: str,
     *,
     threshold: float,
-    confirmation_threshold: float,
     max_price_return: float,
     min_hplp_rise: float,
 ) -> pd.Series:
@@ -363,17 +407,182 @@ def _signal_mask(
         & (d.Return20 <= float(max_price_return))
         & (d.HPLPDelta5 >= float(min_hplp_rise))
     )
-    confirmed = d.ConfirmationScore >= float(confirmation_threshold)
-
-    if signal_type == "HPLP High Score":
+    if pressure_type == "high":
         return high
-    if signal_type == "Bullish HPLP Divergence":
+    if pressure_type == "divergence":
         return divergence
-    if signal_type == "HPLP + Confirmation":
-        return high & confirmed
-    if signal_type == "HPLP Divergence + Confirmation":
-        # Directional guardrails help reject high-activity distribution setups.
-        return divergence & confirmed & (d.CMF > 0) & (d.OBVSlope > 0)
+    raise ValueError(f"Unknown pressure type: {pressure_type}")
+
+
+def _same_day_events(
+    d: pd.DataFrame,
+    pressure_type: str,
+    *,
+    threshold: float,
+    max_price_return: float,
+    min_hplp_rise: float,
+) -> tuple[pd.DataFrame, dict]:
+    mask = _pressure_mask(
+        d, pressure_type,
+        threshold=threshold,
+        max_price_return=max_price_return,
+        min_hplp_rise=min_hplp_rise,
+    )
+    sig = d[mask & d.ForwardReturn.notna()].copy()
+    if sig.empty:
+        return sig, {"eligible_pressure": 0, "triggered": 0, "trigger_rate": np.nan, "median_delay": 0.0}
+
+    sig["PressureDate"] = sig["Date"]
+    sig["EntryDate"] = sig["Date"]
+    sig["PressureHPLP"] = sig["HPLP"]
+    sig["EntryHPLP"] = sig["HPLP"]
+    sig["PressureHPLPDelta5"] = sig["HPLPDelta5"]
+    sig["PressureReturn20"] = sig["Return20"]
+    sig["TriggerDelay"] = 0
+    return sig, {
+        "eligible_pressure": len(sig),
+        "triggered": len(sig),
+        "trigger_rate": 100.0,
+        "median_delay": 0.0,
+    }
+
+
+def _pair_pressure_to_trigger(
+    d: pd.DataFrame,
+    pressure_type: str,
+    *,
+    threshold: float,
+    max_price_return: float,
+    min_hplp_rise: float,
+    trigger_threshold: float,
+    trigger_window: int,
+) -> tuple[pd.DataFrame, dict]:
+    """Find the first qualifying future trigger after each HPLP pressure event.
+
+    Entry is assumed at the trigger day's close; all forward evaluation starts
+    after that trigger bar. No future bar is used to calculate the pressure or
+    trigger score itself.
+    """
+    events = []
+    eligible_pressure = 0
+
+    for symbol, g0 in d.groupby("Symbol", sort=False):
+        g = g0.sort_values("Date").reset_index(drop=True)
+        pmask = _pressure_mask(
+            g, pressure_type,
+            threshold=threshold,
+            max_price_return=max_price_return,
+            min_hplp_rise=min_hplp_rise,
+        ).to_numpy(dtype=bool)
+
+        pressure_idx = np.flatnonzero(pmask)
+        for i in pressure_idx:
+            start = i + 1
+            stop = min(len(g), i + int(trigger_window) + 1)
+            if start >= stop:
+                continue
+
+            future = g.iloc[start:stop].copy()
+            # Count this pressure event only when at least one candidate trigger
+            # day has enough later data to evaluate the selected forward horizon.
+            future_eval = future[future.ForwardReturn.notna()]
+            if future_eval.empty:
+                continue
+            eligible_pressure += 1
+
+            hits = future_eval[future_eval.TriggerScore >= float(trigger_threshold)]
+            if hits.empty:
+                continue
+
+            entry = hits.iloc[0].copy()
+            pressure = g.iloc[i]
+            rec = entry.to_dict()
+            rec["PressureDate"] = pd.Timestamp(pressure.Date)
+            rec["EntryDate"] = pd.Timestamp(entry.Date)
+            rec["PressureHPLP"] = float(pressure.HPLP)
+            rec["EntryHPLP"] = float(entry.HPLP) if pd.notna(entry.HPLP) else np.nan
+            rec["PressureHPLPDelta5"] = float(pressure.HPLPDelta5) if pd.notna(pressure.HPLPDelta5) else np.nan
+            rec["PressureReturn20"] = float(pressure.Return20) if pd.notna(pressure.Return20) else np.nan
+            rec["TriggerDelay"] = int(entry.BarIndex - pressure.BarIndex)
+
+            # HPLP on an event row means the pressure-date HPLP so the signal
+            # remains interpretable as a Pressure -> Trigger setup.
+            rec["HPLP"] = rec["PressureHPLP"]
+            rec["HPLPDelta5"] = rec["PressureHPLPDelta5"]
+            rec["Return20"] = rec["PressureReturn20"]
+            events.append(rec)
+
+    if not events:
+        empty = d.iloc[0:0].copy()
+        for col in ["PressureDate", "EntryDate", "PressureHPLP", "EntryHPLP",
+                    "PressureHPLPDelta5", "PressureReturn20", "TriggerDelay"]:
+            empty[col] = pd.Series(dtype=float if "Date" not in col else "datetime64[ns]")
+        return empty, {
+            "eligible_pressure": eligible_pressure,
+            "triggered": 0,
+            "trigger_rate": 0.0 if eligible_pressure else np.nan,
+            "median_delay": np.nan,
+        }
+
+    sig = pd.DataFrame(events)
+    # Multiple consecutive pressure days may point to the same trigger.
+    # Keep the most recent pressure event before that trigger.
+    sig = (
+        sig.sort_values(["Symbol", "BarIndex", "PressureDate"], ascending=[True, True, False])
+        .drop_duplicates(["Symbol", "BarIndex"], keep="first")
+        .sort_values(["EntryDate", "Symbol"])
+    )
+
+    return sig, {
+        "eligible_pressure": eligible_pressure,
+        "triggered": len(sig),
+        "trigger_rate": (len(sig) / eligible_pressure * 100.0) if eligible_pressure else np.nan,
+        "median_delay": float(sig.TriggerDelay.median()) if len(sig) else np.nan,
+    }
+
+
+def _signal_events(
+    d: pd.DataFrame,
+    signal_type: str,
+    *,
+    threshold: float,
+    max_price_return: float,
+    min_hplp_rise: float,
+    trigger_threshold: float,
+    trigger_window: int,
+) -> tuple[pd.DataFrame, dict]:
+    if signal_type == "HPLP High Score":
+        return _same_day_events(
+            d, "high",
+            threshold=threshold,
+            max_price_return=max_price_return,
+            min_hplp_rise=min_hplp_rise,
+        )
+    if signal_type == "Bullish HPLP Divergence":
+        return _same_day_events(
+            d, "divergence",
+            threshold=threshold,
+            max_price_return=max_price_return,
+            min_hplp_rise=min_hplp_rise,
+        )
+    if signal_type == "HPLP → Trigger":
+        return _pair_pressure_to_trigger(
+            d, "high",
+            threshold=threshold,
+            max_price_return=max_price_return,
+            min_hplp_rise=min_hplp_rise,
+            trigger_threshold=trigger_threshold,
+            trigger_window=trigger_window,
+        )
+    if signal_type == "HPLP Divergence → Trigger":
+        return _pair_pressure_to_trigger(
+            d, "divergence",
+            threshold=threshold,
+            max_price_return=max_price_return,
+            min_hplp_rise=min_hplp_rise,
+            trigger_threshold=trigger_threshold,
+            trigger_window=trigger_window,
+        )
     raise ValueError(f"Unknown HPLP setup: {signal_type}")
 
 
@@ -381,34 +590,41 @@ def _comparison_table(
     d: pd.DataFrame,
     *,
     threshold: float,
-    confirmation_threshold: float,
     max_price_return: float,
     min_hplp_rise: float,
+    trigger_threshold: float,
     horizon: int,
     dedupe: bool,
 ) -> pd.DataFrame:
     rows = []
-    setups = [
-        "HPLP High Score",
-        "Bullish HPLP Divergence",
-        "HPLP + Confirmation",
-        "HPLP Divergence + Confirmation",
+    specs = [
+        ("HPLP High Score", "HPLP High Score", 0),
+        ("Bullish HPLP Divergence", "Bullish HPLP Divergence", 0),
+        ("HPLP → Trigger 3D", "HPLP → Trigger", 3),
+        ("HPLP → Trigger 5D", "HPLP → Trigger", 5),
+        ("HPLP → Trigger 10D", "HPLP → Trigger", 10),
+        ("Divergence → Trigger 3D", "HPLP Divergence → Trigger", 3),
+        ("Divergence → Trigger 5D", "HPLP Divergence → Trigger", 5),
+        ("Divergence → Trigger 10D", "HPLP Divergence → Trigger", 10),
     ]
-    for setup in setups:
-        mask = _signal_mask(
+
+    for label, setup, window in specs:
+        sig, meta = _signal_events(
             d, setup,
             threshold=threshold,
-            confirmation_threshold=confirmation_threshold,
             max_price_return=max_price_return,
             min_hplp_rise=min_hplp_rise,
+            trigger_threshold=trigger_threshold,
+            trigger_window=window if window else 1,
         )
-        sig = d[mask & d.ForwardReturn.notna()].copy()
         if dedupe and not sig.empty:
             sig = _dedupe_signals(sig, horizon)
         hit = sig.Hit5Before3.dropna() if not sig.empty else pd.Series(dtype=float)
         rows.append({
-            "Setup": setup,
+            "Setup": label,
             "Signals": len(sig),
+            "TriggeredRate": meta.get("trigger_rate", np.nan),
+            "MedianDelay": sig.TriggerDelay.median() if len(sig) and "TriggerDelay" in sig else 0.0,
             "MedianReturn": sig.ForwardReturn.median() if len(sig) else np.nan,
             "MedianExcess": sig.ExcessReturn.median() if len(sig) else np.nan,
             "WinRate": (sig.ForwardReturn > 0).mean() * 100 if len(sig) else np.nan,
@@ -428,11 +644,12 @@ def _build_backtest(
     horizon: int,
     signal_type: str,
     threshold: float,
-    confirmation_threshold: float,
+    trigger_threshold: float,
+    trigger_window: int,
     max_price_return: float,
     min_hplp_rise: float,
     dedupe: bool,
-) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, dict]:
     parts = []
     for yahoo_symbol, raw in frames.items():
         symbol = str(yahoo_symbol).replace(".JK", "")
@@ -445,7 +662,7 @@ def _build_backtest(
     d = pd.concat(parts, ignore_index=True)
     d = d[d.AvgValueB >= float(min_value_b)].copy()
     factor_cols = [f for f, w in weights.items() if float(w) > 0]
-    d = d.dropna(subset=factor_cols + ["Return20", "AvgValueB", "ConfirmationScore"])
+    d = d.dropna(subset=factor_cols + ["Return20", "AvgValueB"])
     if d.empty:
         raise ValueError("No historical rows remain after liquidity/feature filters.")
 
@@ -458,23 +675,23 @@ def _build_backtest(
     d["BenchmarkReturn"] = d.groupby("Date")["ForwardReturn"].transform("median")
     d["ExcessReturn"] = d["ForwardReturn"] - d["BenchmarkReturn"]
 
-    mask = _signal_mask(
+    signals, signal_meta = _signal_events(
         d, signal_type,
         threshold=threshold,
-        confirmation_threshold=confirmation_threshold,
         max_price_return=max_price_return,
         min_hplp_rise=min_hplp_rise,
+        trigger_threshold=trigger_threshold,
+        trigger_window=trigger_window,
     )
-    signals = d[mask & d.ForwardReturn.notna()].copy()
     if dedupe and not signals.empty:
         signals = _dedupe_signals(signals, horizon)
 
     comparison = _comparison_table(
         d,
         threshold=threshold,
-        confirmation_threshold=confirmation_threshold,
         max_price_return=max_price_return,
         min_hplp_rise=min_hplp_rise,
+        trigger_threshold=trigger_threshold,
         horizon=horizon,
         dedupe=dedupe,
     )
@@ -500,10 +717,11 @@ def _build_backtest(
     if signals.empty:
         yearly = pd.DataFrame(columns=[
             "Year", "Signals", "MedianReturn", "MedianExcess", "WinRate",
-            "BeatBenchmarkRate", "Hit5Before3", "MedianMFE", "MedianMAE"
+            "BeatBenchmarkRate", "Hit5Before3", "MedianMFE", "MedianMAE", "MedianDelay"
         ])
     else:
-        signals["Year"] = pd.to_datetime(signals.Date).dt.year
+        year_source = pd.to_datetime(signals.EntryDate if "EntryDate" in signals else signals.Date)
+        signals["Year"] = year_source.dt.year
         yearly = (
             signals.groupby("Year")
             .agg(
@@ -515,13 +733,13 @@ def _build_backtest(
                 Hit5Before3=("Hit5Before3", lambda x: x.dropna().mean() * 100 if x.notna().any() else np.nan),
                 MedianMFE=("MFE", "median"),
                 MedianMAE=("MAE", "median"),
+                MedianDelay=("TriggerDelay", "median"),
             )
             .reset_index()
         )
 
     spread, yearly_spread, ic_df = _cross_section_validation(eligible)
-    return d, signals, bucket, yearly, spread, yearly_spread, ic_df, comparison
-
+    return d, signals, bucket, yearly, spread, yearly_spread, ic_df, comparison, signal_meta
 def _bucket_chart(bucket: pd.DataFrame, horizon: int) -> go.Figure:
     fig = go.Figure()
     fig.add_trace(
@@ -575,9 +793,9 @@ def render_hplp_lab() -> None:
     )
 
     st.markdown(
-        '<div class="hplp-note"><b>HPLP v0.3 Pressure + Confirmation</b> separates accumulation pressure from entry timing. '
-        'Pressure keeps the v0.2 directional model; Confirmation independently scores MA20 structure, MACD improvement, breakout, VWAP, volume confirmation and RSI. '
-        'Foreign Intensity remains disabled for long-history tests until a reliable historical IDX foreign archive is available.</div>',
+        '<div class="hplp-note"><b>HPLP v0.4 Pressure → Trigger Study</b> treats HPLP as an early accumulation-pressure detector, '
+        'then waits for a separate transition event before entry. The trigger layer looks for fresh MA20/VWAP reclaims, MACD or RSI crosses, '
+        '10D pivot breaks, volume expansion and strong closes. Forward return starts from the trigger date—not the original pressure date.</div>',
         unsafe_allow_html=True,
     )
 
@@ -585,7 +803,8 @@ def render_hplp_lab() -> None:
         st.markdown('<div class="hplp-section-title">Backtest setup</div>', unsafe_allow_html=True)
         a, b, c, d = st.columns(4)
         version = a.selectbox(
-            "Formula", ["HPLP v0.3 Pressure + Confirmation", "HPLP v0.2 Directional", "HPLP v0.1 Core"],
+            "Formula",
+            ["HPLP v0.4 Pressure → Trigger", "HPLP v0.2 Directional", "HPLP v0.1 Core"],
             index=0, key="hplp_version"
         )
         universe = b.selectbox("Universe", ["Quality 200", "All IDX (current liquid)"], key="hplp_universe")
@@ -594,30 +813,41 @@ def render_hplp_lab() -> None:
 
         e, f, g, h = st.columns(4)
         min_value = e.number_input("Min avg value (Rp B/day)", min_value=0.0, max_value=10000.0, value=0.5, step=0.5, key="hplp_min_value")
-        signal_type = f.selectbox("Signal", ["HPLP High Score", "Bullish HPLP Divergence", "HPLP + Confirmation", "HPLP Divergence + Confirmation"], index=3, key="hplp_signal")
-        threshold = g.slider("HPLP threshold", min_value=50, max_value=95, value=70, step=5, key="hplp_threshold")
-        confirmation_threshold = h.slider("Confirmation threshold", min_value=0, max_value=100, value=60, step=5, key="hplp_confirmation_threshold")
-
-        i, j, k = st.columns([1, 1, 1])
-        dedupe = i.checkbox("De-duplicate signals", value=True, help="Count a ticker again only after the selected forward horizon has passed.", key="hplp_dedupe")
-        max_price_return = j.slider(
-            "Divergence: max 20D price return", min_value=-20, max_value=15,
-            value=3, step=1, key="hplp_max_return",
-            help="Used by both divergence setups and by the automatic four-setup comparison."
+        signal_type = f.selectbox(
+            "Signal",
+            ["HPLP High Score", "Bullish HPLP Divergence", "HPLP → Trigger", "HPLP Divergence → Trigger"],
+            index=3, key="hplp_signal"
         )
-        min_hplp_rise = k.slider(
+        threshold = g.slider("HPLP threshold", min_value=50, max_value=95, value=70, step=5, key="hplp_threshold")
+        trigger_threshold = h.slider("Trigger threshold", min_value=20, max_value=100, value=50, step=5, key="hplp_trigger_threshold")
+
+        i, j, k, l = st.columns(4)
+        trigger_window_label = i.selectbox("Max trigger wait", ["3D", "5D", "10D"], index=1, key="hplp_trigger_window")
+        dedupe = j.checkbox(
+            "De-duplicate signals", value=True,
+            help="Count a ticker again only after the selected forward horizon has passed.",
+            key="hplp_dedupe"
+        )
+        max_price_return = k.slider(
+            "Divergence: max 20D return", min_value=-20, max_value=15,
+            value=3, step=1, key="hplp_max_return"
+        )
+        min_hplp_rise = l.slider(
             "Divergence: min HPLP rise Δ5", min_value=0, max_value=40,
-            value=10, step=5, key="hplp_min_rise",
-            help="Used by both divergence setups and by the automatic four-setup comparison."
+            value=10, step=5, key="hplp_min_rise"
         )
         st.caption(
-            "Confirmation 0–100 = Above MA20 (20) + MA20 rising (15) + MACD improving (15) + "
-            "20D breakout (20) + Above VWAP20 (15) + Relative volume ≥1.2× (10) + RSI 50–70 (5)."
+            "Trigger Score 0–100 = fresh MA20 reclaim (20) + VWAP reclaim (15) + MACD histogram cross > 0 (15) + "
+            "RSI cross 50 (10) + 10D pivot breakout (20) + relative volume ≥1.3× (10) + close in upper 30% of candle (10). "
+            "The trigger must occur after the pressure signal within the selected wait window."
         )
 
     with st.container(border=True):
-        st.markdown('<div class="hplp-section-title">Formula weights</div>', unsafe_allow_html=True)
-        st.caption("Each factor is percentile-ranked against the eligible universe on the same trading date. Weights must total 100%.")
+        st.markdown('<div class="hplp-section-title">Pressure formula weights</div>', unsafe_allow_html=True)
+        st.caption(
+            "Each factor is percentile-ranked against the eligible universe on the same trading date. "
+            "The trigger score is deliberately separate and is not included in these HPLP pressure weights."
+        )
 
         if version == "HPLP v0.1 Core":
             defaults = DEFAULT_WEIGHTS[version]
@@ -637,43 +867,44 @@ def render_hplp_lab() -> None:
         else:
             defaults = DEFAULT_WEIGHTS[version]
             w1, w2, w3, w4 = st.columns(4)
-            cmf_w = w1.number_input("CMF / signed flow %", 0, 100, int(defaults["CMF"]), 5, key="hplp_v2_w_cmf")
-            obv_w = w2.number_input("OBV slope %", 0, 100, int(defaults["OBVSlope"]), 5, key="hplp_v2_w_obv")
-            closep_w = w3.number_input("Close pressure %", 0, 100, int(defaults["ClosePressure"]), 5, key="hplp_v2_w_closep")
-            updown_w = w4.number_input("Up/down volume %", 0, 100, int(defaults["UpDownVolume"]), 5, key="hplp_v2_w_updown")
+            cmf_w = w1.number_input("CMF / signed flow %", 0, 100, int(defaults["CMF"]), 5, key="hplp_v4_w_cmf")
+            obv_w = w2.number_input("OBV slope %", 0, 100, int(defaults["OBVSlope"]), 5, key="hplp_v4_w_obv")
+            closep_w = w3.number_input("Close pressure %", 0, 100, int(defaults["ClosePressure"]), 5, key="hplp_v4_w_closep")
+            updown_w = w4.number_input("Up/down volume %", 0, 100, int(defaults["UpDownVolume"]), 5, key="hplp_v4_w_updown")
             w5, w6, w7, w8 = st.columns(4)
-            absorption_w = w5.number_input("Absorption %", 0, 100, int(defaults["Absorption"]), 5, key="hplp_v2_w_absorption")
-            value_w = w6.number_input("Value acceleration %", 0, 100, int(defaults["ValueAccel"]), 5, key="hplp_v2_w_value")
-            relvol_w = w7.number_input("Relative volume %", 0, 100, int(defaults["RelVolume"]), 5, key="hplp_v2_w_relvol")
-            w8.number_input("Foreign intensity %", 0, 100, 0, 5, disabled=True, key="hplp_v2_w_foreign")
+            absorption_w = w5.number_input("Absorption %", 0, 100, int(defaults["Absorption"]), 5, key="hplp_v4_w_absorption")
+            value_w = w6.number_input("Value acceleration %", 0, 100, int(defaults["ValueAccel"]), 5, key="hplp_v4_w_value")
+            relvol_w = w7.number_input("Relative volume %", 0, 100, int(defaults["RelVolume"]), 5, key="hplp_v4_w_relvol")
+            w8.number_input("Foreign intensity %", 0, 100, 0, 5, disabled=True, key="hplp_v4_w_foreign")
             weights = {
                 "CMF": float(cmf_w), "OBVSlope": float(obv_w),
                 "ClosePressure": float(closep_w), "UpDownVolume": float(updown_w),
                 "Absorption": float(absorption_w), "ValueAccel": float(value_w),
                 "RelVolume": float(relvol_w),
             }
-            st.caption(
-                "Directional pressure factors: Close Pressure = 10D average daily close-location pressure; "
-                "Up/Down Volume = 20D signed volume balance; Absorption = recent traded-value activity × positive volume pressure ÷ 5D price impact."
-            )
 
         total = int(sum(weights.values()))
         total_class = "ok" if total == 100 else "bad"
-        st.markdown(f'<div class="hplp-weight-total {total_class}">Total core weight: <b>{total}%</b></div>', unsafe_allow_html=True)
+        st.markdown(
+            f'<div class="hplp-weight-total {total_class}">Total pressure weight: <b>{total}%</b></div>',
+            unsafe_allow_html=True
+        )
 
         run = st.button(
-            "Run backtest", icon=":material/science:", type="primary", width="stretch",
+            "Run trigger study", icon=":material/science:", type="primary", width="stretch",
             disabled=(total != 100), key="hplp_run",
         )
 
     if universe.startswith("All IDX"):
         st.warning(
-            "All IDX uses today’s listed/liquid universe as the historical sample. This is useful for research but has survivorship/current-listing bias. Quality 200 remains the cleaner first calibration universe."
+            "All IDX uses today’s listed/liquid universe as the historical sample. "
+            "This is useful for research but has survivorship/current-listing bias. Quality 200 remains the cleaner first calibration universe."
         )
 
     if run:
         period_code = period.lower()
         horizon = int(horizon_label.replace("D", ""))
+        trigger_window = int(trigger_window_label.replace("D", ""))
 
         with st.spinner("Loading historical data... please wait"):
             if universe == "Quality 200":
@@ -687,14 +918,15 @@ def render_hplp_lab() -> None:
 
             frames, errors = _cached_history(symbols, period_code)
             try:
-                _, signals, bucket, yearly, spread, yearly_spread, ic_df, comparison = _build_backtest(
+                _, signals, bucket, yearly, spread, yearly_spread, ic_df, comparison, signal_meta = _build_backtest(
                     frames,
                     weights=weights,
                     min_value_b=float(min_value),
                     horizon=horizon,
                     signal_type=signal_type,
                     threshold=float(threshold),
-                    confirmation_threshold=float(confirmation_threshold),
+                    trigger_threshold=float(trigger_threshold),
+                    trigger_window=trigger_window,
                     max_price_return=float(max_price_return),
                     min_hplp_rise=float(min_hplp_rise),
                     dedupe=bool(dedupe),
@@ -705,10 +937,12 @@ def render_hplp_lab() -> None:
 
         st.session_state["hplp_lab_result"] = {
             "signals": signals, "bucket": bucket, "yearly": yearly,
-            "spread": spread, "yearly_spread": yearly_spread, "ic_df": ic_df, "comparison": comparison,
+            "spread": spread, "yearly_spread": yearly_spread, "ic_df": ic_df,
+            "comparison": comparison, "signal_meta": signal_meta,
             "horizon": horizon, "universe": universe,
             "requested": len(symbols), "usable": len(frames), "failed": len(errors),
-            "history": period, "signal_type": signal_type, "threshold": threshold, "confirmation_threshold": confirmation_threshold,
+            "history": period, "signal_type": signal_type, "threshold": threshold,
+            "trigger_threshold": trigger_threshold, "trigger_window": trigger_window,
             "min_value": min_value, "weights": weights.copy(), "version": version,
             "universe_status": universe_status,
         }
@@ -716,8 +950,9 @@ def render_hplp_lab() -> None:
     bundle = st.session_state.get("hplp_lab_result")
     if bundle is None:
         st.markdown(
-            '<div class="hplp-empty"><b>Ready to test HPLP v0.3.</b>'
-            '<span>Run v0.3 first, then use the automatic four-setup comparison to locate the edge. The lab does not change the live Smart Money Screener.</span></div>',
+            '<div class="hplp-empty"><b>Ready to test HPLP v0.4.</b>'
+            '<span>Start with Quality 200 · 2Y · 20D horizon · Divergence → Trigger · 5D wait. '
+            'The automatic table will compare pressure-only entries with 3D, 5D and 10D future-trigger entries.</span></div>',
             unsafe_allow_html=True,
         )
         return
@@ -729,34 +964,47 @@ def render_hplp_lab() -> None:
     yearly_spread = bundle.get("yearly_spread", pd.DataFrame())
     ic_df = bundle.get("ic_df", pd.DataFrame())
     comparison = bundle.get("comparison", pd.DataFrame())
+    signal_meta = bundle.get("signal_meta", {})
     horizon = int(bundle["horizon"])
     result_universe = bundle["universe"]
     result_version = bundle.get("version", "HPLP")
 
     st.markdown(
         f'<div class="hplp-status">Last run · {result_version} · {result_universe} · {bundle["history"]} history · '
-        f'{bundle.get("signal_type", "HPLP")} · HPLP ≥ {bundle["threshold"]} · Confirmation ≥ {bundle.get("confirmation_threshold", 0)} · <b>{bundle["requested"]}</b> requested · '
+        f'{bundle.get("signal_type", "HPLP")} · HPLP ≥ {bundle["threshold"]} · Trigger ≥ {bundle.get("trigger_threshold", 0)} · '
+        f'wait ≤ {bundle.get("trigger_window", 0)}D · <b>{bundle["requested"]}</b> requested · '
         f'<b>{bundle["usable"]}</b> Yahoo histories usable · <b>{bundle["failed"]}</b> failed</div>',
         unsafe_allow_html=True,
     )
 
     if signals.empty:
-        st.warning("No historical signals matched this rule. Lower the HPLP threshold or relax the divergence conditions.")
+        st.warning(
+            "No historical entries matched this rule. Lower the HPLP/trigger threshold, "
+            "increase the trigger wait window, or relax the divergence conditions."
+        )
     else:
         hit_series = signals.Hit5Before3.dropna()
+        trigger_rate = signal_meta.get("trigger_rate", np.nan)
+        median_delay = signals.TriggerDelay.median() if "TriggerDelay" in signals else 0.0
+
         metrics = {
-            "Signals": f"{len(signals):,}",
+            "Entries": f"{len(signals):,}",
             f"Median {horizon}D Return": _num(signals.ForwardReturn.median()),
             "Win Rate": _pct((signals.ForwardReturn > 0).mean() * 100),
             "Median MFE": _num(signals.MFE.median()),
             "Median MAE": _num(signals.MAE.median()),
             "+5% before -3%": _pct(hit_series.mean() * 100 if len(hit_series) else np.nan),
+            "Trigger Rate": _pct(trigger_rate),
+            "Median Delay": "—" if pd.isna(median_delay) else f"{median_delay:.1f}D",
         }
-        cols = st.columns(6)
+        cols = st.columns(8)
         for col, (label, value) in zip(cols, metrics.items()):
             col.metric(label, value)
 
-        st.markdown('<div class="hplp-section-title" style="margin-top:18px">Relative-edge validation</div>', unsafe_allow_html=True)
+        st.markdown(
+            '<div class="hplp-section-title" style="margin-top:18px">Relative-edge validation</div>',
+            unsafe_allow_html=True
+        )
         median_spread = spread.Spread.median() if not spread.empty else np.nan
         positive_spread = (spread.Spread > 0).mean() * 100 if not spread.empty else np.nan
         median_ic = ic_df.RankIC.median() if not ic_df.empty else np.nan
@@ -764,46 +1012,65 @@ def render_hplp_lab() -> None:
         research_metrics = {
             "Median Excess Return": _num(signals.ExcessReturn.median()),
             "Beat Universe Rate": _pct((signals.ExcessReturn > 0).mean() * 100),
-            "Top 20% − Bottom 20%": _num(median_spread),
+            "Pressure Top−Bottom": _num(median_spread),
             "Positive Spread Days": _pct(positive_spread),
-            "Median Rank IC": "—" if pd.isna(median_ic) else f"{median_ic:+.3f}",
+            "Pressure Rank IC": "—" if pd.isna(median_ic) else f"{median_ic:+.3f}",
             "Positive IC Days": _pct(positive_ic),
         }
         cols2 = st.columns(6)
         for col, (label, value) in zip(cols2, research_metrics.items()):
             col.metric(label, value)
         st.caption(
-            "Benchmark = median forward return of the eligible universe on the same signal date. "
-            "Top−Bottom spread compares HPLP 80–100 vs 0–20. Rank IC is the daily Spearman relationship between HPLP and future returns."
+            "Signal excess return uses the eligible-universe median forward return on the actual entry/trigger date. "
+            "Top−Bottom spread and Rank IC remain diagnostics of the underlying HPLP Pressure score itself."
         )
 
     with st.container(border=True):
-        st.markdown('<div class="hplp-section-title">Which HPLP setup actually has the edge?</div>', unsafe_allow_html=True)
+        st.markdown(
+            '<div class="hplp-section-title">Does waiting for a future trigger improve HPLP?</div>',
+            unsafe_allow_html=True
+        )
         st.caption(
-            "All four setups use the exact same historical dataset, HPLP threshold, divergence rules and confirmation threshold. "
-            "This comparison isolates whether technical confirmation improves the pressure signal."
+            "One run compares same-day HPLP entries with first qualifying future triggers at 3D, 5D and 10D. "
+            "Triggered % is the share of evaluable pressure events that found a qualifying trigger. "
+            "Forward return starts at the trigger-day close."
         )
         if comparison.empty:
-            st.info("No setup comparison is available for this run.")
+            st.info("No trigger comparison is available for this run.")
         else:
             cmp = comparison.copy()
             cmp.columns = [
-                "Setup", "Signals", f"Median {horizon}D Return %", "Median Excess %", "Win Rate %",
+                "Setup", "Entries", "Triggered %", "Median Delay D",
+                f"Median {horizon}D Return %", "Median Excess %", "Win Rate %",
                 "Beat Universe %", "+5% before -3%", "Median MFE %", "Median MAE %"
             ]
-            for col in [f"Median {horizon}D Return %", "Median Excess %", "Win Rate %", "Beat Universe %", "+5% before -3%", "Median MFE %", "Median MAE %"]:
+            for col in [
+                "Triggered %", "Median Delay D", f"Median {horizon}D Return %",
+                "Median Excess %", "Win Rate %", "Beat Universe %",
+                "+5% before -3%", "Median MFE %", "Median MAE %"
+            ]:
                 cmp[col] = pd.to_numeric(cmp[col], errors="coerce").round(2)
             st.dataframe(cmp, hide_index=True, width="stretch")
 
     with st.container(border=True):
-        st.markdown('<div class="hplp-section-title">Does a higher HPLP pressure score lead to better forward returns?</div>', unsafe_allow_html=True)
+        st.markdown(
+            '<div class="hplp-section-title">Pressure-score ranking diagnostic</div>',
+            unsafe_allow_html=True
+        )
+        st.caption(
+            "This chart intentionally ignores the trigger layer. It answers a separate question: "
+            "does the underlying HPLP Pressure score itself rank future returns?"
+        )
         st.plotly_chart(_bucket_chart(bucket, horizon), width="stretch", config={"displayModeBar": False})
         display_bucket = bucket.copy()
         display_bucket.columns = [
             "HPLP", "Observations", f"Median {horizon}D Return %", "Median Excess %",
             "Win Rate %", "Beat Universe %", "Median MFE %", "Median MAE %"
         ]
-        for col in [f"Median {horizon}D Return %", "Median Excess %", "Win Rate %", "Beat Universe %", "Median MFE %", "Median MAE %"]:
+        for col in [
+            f"Median {horizon}D Return %", "Median Excess %", "Win Rate %",
+            "Beat Universe %", "Median MFE %", "Median MAE %"
+        ]:
             display_bucket[col] = display_bucket[col].round(2)
         st.dataframe(display_bucket, hide_index=True, width="stretch")
 
@@ -814,44 +1081,64 @@ def render_hplp_lab() -> None:
         else:
             yd = yearly.copy()
             if not yearly_spread.empty:
-                yd = yd.merge(yearly_spread[["Year", "MedianSpread", "PositiveSpreadRate"]], on="Year", how="left")
+                yd = yd.merge(
+                    yearly_spread[["Year", "MedianSpread", "PositiveSpreadRate"]],
+                    on="Year", how="left"
+                )
             else:
                 yd["MedianSpread"] = np.nan
                 yd["PositiveSpreadRate"] = np.nan
             yd.columns = [
-                "Year", "Signals", f"Median {horizon}D Return %", "Median Excess %", "Win Rate %",
-                "Beat Universe %", "+5% before -3%", "Median MFE %", "Median MAE %",
-                "Top-Bottom Spread %", "Positive Spread Days %"
+                "Year", "Entries", f"Median {horizon}D Return %", "Median Excess %",
+                "Win Rate %", "Beat Universe %", "+5% before -3%",
+                "Median MFE %", "Median MAE %", "Median Trigger Delay D",
+                "Pressure Top-Bottom Spread %", "Positive Spread Days %"
             ]
             for col in [
-                f"Median {horizon}D Return %", "Median Excess %", "Win Rate %", "Beat Universe %",
-                "+5% before -3%", "Median MFE %", "Median MAE %", "Top-Bottom Spread %", "Positive Spread Days %"
+                f"Median {horizon}D Return %", "Median Excess %", "Win Rate %",
+                "Beat Universe %", "+5% before -3%", "Median MFE %",
+                "Median MAE %", "Median Trigger Delay D",
+                "Pressure Top-Bottom Spread %", "Positive Spread Days %"
             ]:
                 yd[col] = pd.to_numeric(yd[col], errors="coerce").round(2)
             st.dataframe(yd, hide_index=True, width="stretch")
 
     with st.container(border=True):
-        st.markdown('<div class="hplp-section-title">Historical signal sample</div>', unsafe_allow_html=True)
+        st.markdown('<div class="hplp-section-title">Historical trigger sample</div>', unsafe_allow_html=True)
         if signals.empty:
-            st.info("No signals to display.")
+            st.info("No entries to display.")
         else:
-            sample = signals.sort_values(["Date", "HPLP"], ascending=[False, False]).head(100).copy()
+            sample = signals.sort_values(
+                ["EntryDate", "HPLP"], ascending=[False, False]
+            ).head(100).copy()
             sample = sample[[
-                "Date", "Symbol", "HPLP", "ConfirmationScore", "HPLPDelta5", "Return20", "AvgValueB",
-                "AboveMA20", "Breakout20", "MACDImproving", "ForwardReturn", "ExcessReturn", "MFE", "MAE", "Hit5Before3"
+                "PressureDate", "EntryDate", "Symbol", "PressureHPLP", "EntryHPLP",
+                "PressureHPLPDelta5", "PressureReturn20", "TriggerDelay", "TriggerScore",
+                "MA20Reclaim", "VWAPReclaim", "MACDZeroCross", "RSI50Cross",
+                "Breakout10", "TriggerVolume", "CloseUpper30",
+                "ForwardReturn", "ExcessReturn", "MFE", "MAE", "Hit5Before3"
             ]]
             sample.columns = [
-                "Date", "Ticker", "HPLP Pressure", "Confirmation", "HPLP Δ5", "Price 20D %", "Avg Value RpB",
-                "Above MA20", "20D Breakout", "MACD Improving", f"Forward {horizon}D %", "Excess vs Universe %", "MFE %", "MAE %", "+5 before -3"
+                "Pressure Date", "Entry / Trigger Date", "Ticker", "Pressure HPLP", "Entry HPLP",
+                "HPLP Δ5", "Pressure Price 20D %", "Delay D", "Trigger Score",
+                "MA20 Reclaim", "VWAP Reclaim", "MACD >0 Cross", "RSI 50 Cross",
+                "10D Breakout", "RelVol ≥1.3x", "Strong Close",
+                f"Forward {horizon}D %", "Excess vs Universe %", "MFE %", "MAE %", "+5 before -3"
             ]
             for col in [
-                "HPLP Pressure", "Confirmation", "HPLP Δ5", "Price 20D %", "Avg Value RpB",
-                f"Forward {horizon}D %", "Excess vs Universe %", "MFE %", "MAE %"
+                "Pressure HPLP", "Entry HPLP", "HPLP Δ5", "Pressure Price 20D %",
+                "Delay D", "Trigger Score", f"Forward {horizon}D %",
+                "Excess vs Universe %", "MFE %", "MAE %"
             ]:
                 sample[col] = pd.to_numeric(sample[col], errors="coerce").round(2)
-            st.dataframe(sample, hide_index=True, width="stretch", height=420)
+            st.dataframe(sample, hide_index=True, width="stretch", height=440)
 
     st.caption(
-        "Research notes: HPLP Pressure and Confirmation use only information available up to each signal date. Confirmation is independent from the pressure score and uses MA20 structure, MACD improvement, breakout, VWAP, relative volume and RSI. Forward return, benchmark, spread and Rank IC use later bars only for evaluation. Same-day +5% and -3% touches are excluded because daily OHLC cannot reveal intraday order. All-IDX mode remains current-listing biased."
+        "Research notes: HPLP Pressure uses only data available on the pressure date. "
+        "Each transition trigger uses only current/prior bars on its own trigger date. "
+        "The study then assumes entry at that trigger day's close and evaluates later bars only. "
+        "This is an end-of-day research assumption; a future version can test next-session-open execution for stricter realism. "
+        "Same-day +5% and -3% touches are excluded because daily OHLC cannot reveal intraday order. "
+        "All-IDX mode remains current-listing biased."
     )
 
