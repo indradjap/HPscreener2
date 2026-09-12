@@ -4,7 +4,6 @@ from dashboard import render_dashboard
 from idx_official import build_idx_heatmap_dataset, fetch_latest_investor_flow
 from market_overview import render_market_overview
 from smart_money import render_smart_money
-from hplp_lab import render_hplp_lab
 from stock_pick import render_stock_pick
 from ui import apply_style, navigate, sidebar_menu
 
@@ -33,5 +32,3 @@ elif section == 'Smart Money Screener':
     render_smart_money(navigate=navigate)
 elif section == 'Stock Pick':
     render_stock_pick(navigate=navigate)
-elif section == 'HPLP Lab':
-    render_hplp_lab()
