@@ -79,6 +79,7 @@ def _technical_row(symbol: str, raw: pd.DataFrame) -> dict | None:
     d = d[needed].dropna().copy()
     if len(d) < 60:
         return None
+
     c = pd.to_numeric(d.Close, errors="coerce")
     h = pd.to_numeric(d.High, errors="coerce")
     l = pd.to_numeric(d.Low, errors="coerce")
@@ -97,14 +98,10 @@ def _technical_row(symbol: str, raw: pd.DataFrame) -> dict | None:
     stoch_d = stoch_k.rolling(3).mean()
 
     typical = (h + l + c) / 3.0
-    vwap20 = (typical * v).rolling(20).sum() / v.rolling(20).sum().replace(0, np.nan)
     spread = (h - l).replace(0, np.nan)
     mfv = (((c - l) - (h - c)) / spread).fillna(0) * v
-    cmf20 = mfv.rolling(20).sum() / v.rolling(20).sum().replace(0, np.nan)
-
     direction = np.sign(c.diff()).fillna(0)
     obv = (direction * v).cumsum()
-    obv_up = bool(len(obv) >= 21 and obv.iloc[-1] > obv.iloc[-21])
 
     ema12 = _ema(c, 12)
     ema26 = _ema(c, 26)
@@ -112,39 +109,17 @@ def _technical_row(symbol: str, raw: pd.DataFrame) -> dict | None:
     signal = _ema(macd, 9)
     hist = macd - signal
 
-    prior20 = h.shift(1).rolling(20).max()
-    ret20 = (c.iloc[-1] / c.iloc[-21] - 1) * 100 if len(c) >= 21 and c.iloc[-21] else np.nan
-    prev20vol = v.shift(1).rolling(20).mean()
-    relvol = v.iloc[-1] / prev20vol.iloc[-1] if len(v) >= 21 and prev20vol.iloc[-1] > 0 else np.nan
-    value20b = float((c * v).tail(20).mean() / 1e9)
     close = float(c.iloc[-1])
     m20 = float(ma20.iloc[-1]) if pd.notna(ma20.iloc[-1]) else np.nan
     m50 = float(ma50.iloc[-1]) if pd.notna(ma50.iloc[-1]) else np.nan
     m200 = float(ma200.iloc[-1]) if pd.notna(ma200.iloc[-1]) else np.nan
-    vw = float(vwap20.iloc[-1]) if pd.notna(vwap20.iloc[-1]) else np.nan
-    cmf = float(cmf20.iloc[-1]) if pd.notna(cmf20.iloc[-1]) else np.nan
-    rv = float(relvol) if pd.notna(relvol) else np.nan
-    breakout = bool(pd.notna(prior20.iloc[-1]) and close > prior20.iloc[-1])
-    trend = bool(pd.notna(m20) and pd.notna(m50) and close > m20 > m50)
     above200 = bool(pd.notna(m200) and close > m200)
+    trend = bool(pd.notna(m20) and pd.notna(m50) and close > m20 > m50)
     macd_positive = bool(pd.notna(hist.iloc[-1]) and hist.iloc[-1] > 0)
-    vwap_pct = ((close / vw) - 1) * 100 if pd.notna(vw) and vw else np.nan
 
-    flow_checks = [
-        cmf > 0 if pd.notna(cmf) else False,
-        obv_up,
-        rv >= 1.2 if pd.notna(rv) else False,
-        vwap_pct >= 0 if pd.notna(vwap_pct) else False,
-        close > m20 if pd.notna(m20) else False,
-        macd_positive,
-    ]
-    money_flow_score = round(sum(flow_checks) / len(flow_checks) * 100)
-
-    return {
+    row = {
         "Symbol": symbol,
         "Close": close,
-        "Return20": float(ret20) if pd.notna(ret20) else np.nan,
-        "Value20B": value20b,
         "RSI": float(rsi.iloc[-1]) if pd.notna(rsi.iloc[-1]) else np.nan,
         "StochK": float(stoch_k.iloc[-1]) if pd.notna(stoch_k.iloc[-1]) else np.nan,
         "StochD": float(stoch_d.iloc[-1]) if pd.notna(stoch_d.iloc[-1]) else np.nan,
@@ -153,110 +128,371 @@ def _technical_row(symbol: str, raw: pd.DataFrame) -> dict | None:
         "MA200": m200,
         "AboveMA200": above200,
         "Trend": trend,
-        "VWAPPct": float(vwap_pct) if pd.notna(vwap_pct) else np.nan,
-        "CMF20": cmf,
-        "RelVolume": rv,
-        "Breakout20": breakout,
         "MACDPositive": macd_positive,
-        "OBVUp": obv_up,
-        "MoneyFlowScore": money_flow_score,
         "YahooDate": pd.Timestamp(d.index[-1]).date().isoformat() if isinstance(d.index, pd.DatetimeIndex) else "",
     }
 
+    for n in (5, 10, 20, 60):
+        ret = (c.iloc[-1] / c.iloc[-n-1] - 1) * 100 if len(c) >= n + 1 and c.iloc[-n-1] else np.nan
+        value_b = float((c * v).tail(n).mean() / 1e9)
+
+        vwap_n = (typical * v).rolling(n).sum() / v.rolling(n).sum().replace(0, np.nan)
+        vw = float(vwap_n.iloc[-1]) if pd.notna(vwap_n.iloc[-1]) else np.nan
+        vwap_pct = ((close / vw) - 1) * 100 if pd.notna(vw) and vw else np.nan
+
+        cmf_n = mfv.rolling(n).sum() / v.rolling(n).sum().replace(0, np.nan)
+        cmf = float(cmf_n.iloc[-1]) if pd.notna(cmf_n.iloc[-1]) else np.nan
+
+        prev_vol = v.shift(1).rolling(n).mean()
+        relvol = v.iloc[-1] / prev_vol.iloc[-1] if len(v) >= n + 1 and prev_vol.iloc[-1] > 0 else np.nan
+        rv = float(relvol) if pd.notna(relvol) else np.nan
+
+        prior_high = h.shift(1).rolling(n).max()
+        breakout = bool(pd.notna(prior_high.iloc[-1]) and close > prior_high.iloc[-1])
+        obv_up = bool(len(obv) >= n + 1 and obv.iloc[-1] > obv.iloc[-n-1])
+
+        flow_checks = [
+            cmf > 0 if pd.notna(cmf) else False,
+            obv_up,
+            rv >= 1.2 if pd.notna(rv) else False,
+            vwap_pct >= 0 if pd.notna(vwap_pct) else False,
+            close > m20 if pd.notna(m20) else False,
+            macd_positive,
+        ]
+        money_flow_score = round(sum(flow_checks) / len(flow_checks) * 100)
+
+        row[f"Return{n}"] = float(ret) if pd.notna(ret) else np.nan
+        row[f"Value{n}B"] = value_b
+        row[f"VWAPPct{n}"] = float(vwap_pct) if pd.notna(vwap_pct) else np.nan
+        row[f"CMF{n}"] = cmf
+        row[f"RelVolume{n}"] = rv
+        row[f"Breakout{n}"] = breakout
+        row[f"OBVUp{n}"] = obv_up
+        row[f"MoneyFlowScore{n}"] = money_flow_score
+
+    return row
 
 def _foreign_metrics(history: pd.DataFrame) -> pd.DataFrame:
+    base_cols = ["Symbol", "CompanyIDX", "IDXDate"]
+    dyn_cols = []
+    for n in (5, 10, 20, 60):
+        dyn_cols += [f"ForeignNet{n}", f"ForeignIntensity{n}", f"ForeignPositiveDays{n}"]
     if history is None or history.empty:
-        return pd.DataFrame(columns=["Symbol", "CompanyIDX", "ForeignNet20", "ForeignNet5", "ForeignIntensity20", "ForeignPositiveDays"])
+        return pd.DataFrame(columns=base_cols + dyn_cols)
+
     d = history.copy()
     d["ForeignBuy"] = pd.to_numeric(d.ForeignBuy, errors="coerce").fillna(0.0)
     d["ForeignSell"] = pd.to_numeric(d.ForeignSell, errors="coerce").fillna(0.0)
     d["ForeignNet"] = d.ForeignBuy - d.ForeignSell
     d["ForeignGross"] = d.ForeignBuy.abs() + d.ForeignSell.abs()
+
     rows = []
     for symbol, g in d.groupby("Symbol"):
-        g = g.sort_values("SessionDate").tail(20)
+        g = g.sort_values("SessionDate").tail(60)
         if g.empty:
             continue
-        net20 = float(g.ForeignNet.sum())
-        gross20 = float(g.ForeignGross.sum())
-        last5 = g.tail(5)
-        intensity = net20 / gross20 * 100 if gross20 > 0 else 0.0
+
         latest_company = str(g.iloc[-1].get("CompanySummary") or symbol)
-        rows.append({
+        row = {
             "Symbol": symbol,
             "CompanyIDX": latest_company,
-            "ForeignNet20": net20,
-            "ForeignNet5": float(last5.ForeignNet.sum()),
-            "ForeignIntensity20": intensity,
-            "ForeignPositiveDays": int((g.ForeignNet > 0).sum()),
             "IDXDate": pd.to_datetime(g.SessionDate).max().date().isoformat(),
-        })
+        }
+        for n in (5, 10, 20, 60):
+            w = g.tail(n)
+            net = float(w.ForeignNet.sum())
+            gross = float(w.ForeignGross.sum())
+            row[f"ForeignNet{n}"] = net
+            row[f"ForeignIntensity{n}"] = net / gross * 100 if gross > 0 else 0.0
+            row[f"ForeignPositiveDays{n}"] = int((w.ForeignNet > 0).sum())
+        rows.append(row)
+
     return pd.DataFrame(rows)
+
+def _idx_stage1_metrics(history: pd.DataFrame, meta: pd.DataFrame) -> pd.DataFrame:
+    """Build whole-IDX pre-screen metrics before any Yahoo history is requested."""
+    if history is None or history.empty:
+        return pd.DataFrame()
+
+    d = history.copy()
+    for col in ("Close", "Volume", "TradedValue", "Frequency", "ForeignBuy", "ForeignSell"):
+        d[col] = pd.to_numeric(d.get(col), errors="coerce").fillna(0.0)
+    d["ForeignNet"] = d["ForeignBuy"] - d["ForeignSell"]
+    d["ForeignGross"] = d["ForeignBuy"].abs() + d["ForeignSell"].abs()
+
+    rows = []
+    for symbol, g in d.groupby("Symbol"):
+        g = g.sort_values("SessionDate").tail(60).copy()
+        if g.empty:
+            continue
+        latest = g.iloc[-1]
+        row = {
+            "Symbol": symbol,
+            "CompanyIDX": str(latest.get("CompanySummary") or symbol),
+            "IDXDate": pd.to_datetime(g.SessionDate).max().date().isoformat(),
+            "IDXClose": float(latest.Close),
+            "IDXFrequency": float(latest.Frequency),
+        }
+
+        for n in (5, 10, 20, 60):
+            w = g.tail(n)
+            avg_value_b = float(w.TradedValue.mean() / 1e9) if not w.empty else 0.0
+            prior_vol = g.iloc[:-1].tail(n).Volume
+            relvol = float(latest.Volume / prior_vol.mean()) if len(prior_vol) and prior_vol.mean() > 0 else np.nan
+
+            first_close = float(w.Close.iloc[0]) if len(w) else 0.0
+            ret = ((float(latest.Close) / first_close) - 1) * 100 if first_close > 0 else np.nan
+            prior_close_high = g.iloc[:-1].tail(n).Close.max() if len(g) > 1 else np.nan
+            close_breakout = bool(pd.notna(prior_close_high) and float(latest.Close) > float(prior_close_high))
+
+            net = float(w.ForeignNet.sum())
+            gross = float(w.ForeignGross.sum())
+            row[f"IDXValue{n}B"] = avg_value_b
+            row[f"IDXRelVolume{n}"] = relvol
+            row[f"IDXReturn{n}"] = float(ret) if pd.notna(ret) else np.nan
+            row[f"IDXCloseBreakout{n}"] = close_breakout
+            row[f"ForeignNet{n}"] = net
+            row[f"ForeignIntensity{n}"] = net / gross * 100 if gross > 0 else 0.0
+            row[f"ForeignPositiveDays{n}"] = int((w.ForeignNet > 0).sum())
+
+        rows.append(row)
+
+    stage = pd.DataFrame(rows)
+    if stage.empty:
+        return stage
+
+    if meta is not None and not meta.empty:
+        stage = stage.merge(meta, on="Symbol", how="left")
+    if "Company" not in stage:
+        stage["Company"] = np.nan
+    if "Sector" not in stage:
+        stage["Sector"] = np.nan
+    if "SubSector" not in stage:
+        stage["SubSector"] = np.nan
+    stage["Company"] = stage["Company"].fillna(stage["CompanyIDX"]).fillna(stage.Symbol)
+    stage["Sector"] = stage["Sector"].fillna("IDX")
+    stage["SubSector"] = stage["SubSector"].fillna("")
+    return stage.reset_index(drop=True)
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
-def cached_smart_money_dataset() -> tuple[pd.DataFrame, dict]:
-    symbols = _quality_universe()
-    frames, errors = download_universe(symbols, period="2y", chunk_size=60)
-    tech_rows = []
-    for s in symbols:
-        raw = frames.get(s + ".JK")
-        if raw is None:
-            continue
-        row = _technical_row(s, raw)
-        if row:
-            tech_rows.append(row)
-    tech = pd.DataFrame(tech_rows)
-    if tech.empty:
-        raise ValueError("Yahoo returned no usable Quality 200 technical history.")
-
-    idx_error = None
-    try:
-        idx_hist = fetch_idx_market_history(sessions=20)
-        foreign = _foreign_metrics(idx_hist)
-    except Exception as exc:
-        idx_error = str(exc)
-        foreign = pd.DataFrame(columns=["Symbol", "CompanyIDX", "ForeignNet20", "ForeignNet5", "ForeignIntensity20", "ForeignPositiveDays", "IDXDate"])
-
-    meta_error = None
+def cached_idx_smart_base() -> tuple[pd.DataFrame, dict]:
+    """Fetch the whole IDX universe once and build stage-1 metrics."""
+    idx_hist = fetch_idx_market_history(sessions=60, max_calendar_days=100)
     try:
         meta = fetch_stock_screener_metadata()[["Symbol", "Company", "Sector", "SubSector"]].copy()
+        meta_error = None
     except Exception as exc:
-        meta_error = str(exc)
         meta = pd.DataFrame(columns=["Symbol", "Company", "Sector", "SubSector"])
+        meta_error = str(exc)
 
-    d = tech.merge(foreign, on="Symbol", how="left").merge(meta, on="Symbol", how="left")
-    if "CompanyIDX" not in d:
-        d["CompanyIDX"] = np.nan
-    d["Company"] = d["Company"].fillna(d["CompanyIDX"]).fillna(d.Symbol)
-    d["Sector"] = d["Sector"].fillna("IDX")
-    for c in ["ForeignNet20", "ForeignNet5", "ForeignIntensity20", "ForeignPositiveDays"]:
-        if c not in d:
-            d[c] = np.nan
+    stage = _idx_stage1_metrics(idx_hist, meta)
+    if stage.empty:
+        raise ValueError("IDX returned no usable whole-market stage-1 data.")
 
-    foreign_score = np.clip((d.ForeignIntensity20.fillna(0) + 10) / 20 * 100, 0, 100)
-    tech_score = (
-        d.Trend.astype(int) * 30
-        + d.AboveMA200.astype(int) * 15
-        + d.Breakout20.astype(int) * 20
-        + d.MACDPositive.astype(int) * 15
-        + (d.RelVolume.fillna(0) >= 1.2).astype(int) * 20
-    )
-    d["SmartScore"] = (0.35 * d.MoneyFlowScore + 0.30 * foreign_score + 0.35 * tech_score).round().clip(0, 100)
-
-    yahoo_dates = [x for x in d.YahooDate.dropna().astype(str) if x]
-    idx_dates = [x for x in d.get("IDXDate", pd.Series(dtype=str)).dropna().astype(str) if x]
-    as_of = max(yahoo_dates + idx_dates) if (yahoo_dates or idx_dates) else "latest"
+    dates = [x for x in stage.IDXDate.dropna().astype(str) if x]
     status = {
-        "as_of": as_of,
-        "requested": len(symbols),
-        "yahoo_ok": int(d.Symbol.nunique()),
-        "yahoo_failed": len(errors),
-        "idx_foreign_available": bool(not foreign.empty),
-        "idx_error": idx_error,
+        "idx_as_of": max(dates) if dates else "latest",
+        "idx_total": int(stage.Symbol.nunique()),
         "meta_error": meta_error,
     }
+    return stage, status
+
+
+def _stage1_candidates(
+    stage: pd.DataFrame,
+    *,
+    universe: str,
+    lookback: int,
+    min_value_b: float,
+    setup: str,
+    custom_cfg: dict | None = None,
+) -> tuple[pd.DataFrame, dict]:
+    """Screen every requested IDX stock using cheap official-IDX metrics first."""
+    x = stage.copy()
+    if universe == "Quality 200":
+        quality = set(_quality_universe())
+        x = x[x.Symbol.isin(quality)].copy()
+
+    universe_count = int(x.Symbol.nunique())
+    value_col = f"IDXValue{lookback}B"
+    relvol_col = f"IDXRelVolume{lookback}"
+    breakout_col = f"IDXCloseBreakout{lookback}"
+    foreign_col = f"ForeignNet{lookback}"
+    intensity_col = f"ForeignIntensity{lookback}"
+
+    x = x[pd.to_numeric(x[value_col], errors="coerce").fillna(0) >= float(min_value_b)].copy()
+    liquid_count = int(x.Symbol.nunique())
+
+    # Keep stage 1 as a broad/safe superset of the final Yahoo-based screen.
+    if setup == "Foreign Accumulation":
+        x = x[
+            (x[intensity_col].fillna(0) > 0)
+            & (x[foreign_col].fillna(0) > 0)
+            & (x["ForeignNet5"].fillna(0) > 0)
+        ]
+    elif setup == "Technical Breakout":
+        x = x[
+            x[breakout_col].fillna(False)
+            | (x[relvol_col].fillna(0) >= 1.0)
+            | (x[f"IDXReturn{lookback}"].fillna(0) > 0)
+        ]
+    elif setup == "Smart Money + Technical":
+        x = x[
+            (x[intensity_col].fillna(0) > 0)
+            & (
+                (x[relvol_col].fillna(0) >= 0.8)
+                | (x[f"IDXReturn{lookback}"].fillna(0) >= 0)
+            )
+        ]
+    elif setup == "Custom Screen":
+        cfg = custom_cfg or {}
+        if cfg.get("foreign"):
+            x = x[x[foreign_col].fillna(0) > 0]
+        if cfg.get("breakout"):
+            x = x[x[breakout_col].fillna(False)]
+        if float(cfg.get("relvol", 0) or 0) > 0:
+            x = x[x[relvol_col].fillna(0) >= float(cfg["relvol"])]
+    # Money Flow Accumulation intentionally has no extra IDX pre-filter:
+    # CMF/OBV require historical OHLCV, so all liquid stocks proceed to Yahoo.
+
+    # More active names first makes Yahoo partial failures less damaging.
+    x = x.sort_values(
+        [value_col, relvol_col, intensity_col],
+        ascending=[False, False, False],
+        na_position="last",
+    )
+    status = {
+        "universe_count": universe_count,
+        "liquid_count": liquid_count,
+        "candidate_count": int(x.Symbol.nunique()),
+    }
+    return x.reset_index(drop=True), status
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def cached_yahoo_technical_dataset(symbols: tuple[str, ...]) -> tuple[pd.DataFrame, dict]:
+    if not symbols:
+        return pd.DataFrame(), {}
+    frames, errors = download_universe(symbols, period="2y", chunk_size=60)
+    rows = []
+    for symbol in symbols:
+        raw = frames.get(symbol + ".JK")
+        if raw is None:
+            continue
+        row = _technical_row(symbol, raw)
+        if row:
+            rows.append(row)
+    return pd.DataFrame(rows), errors
+
+
+def build_smart_money_dataset(
+    *,
+    universe: str,
+    lookback: int,
+    min_value_b: float,
+    setup: str,
+    custom_cfg: dict | None = None,
+) -> tuple[pd.DataFrame, dict]:
+    """Two-stage whole-market screen: IDX pre-filter -> Yahoo technical confirmation."""
+    stage, idx_status = cached_idx_smart_base()
+    candidates, stage_status = _stage1_candidates(
+        stage,
+        universe=universe,
+        lookback=lookback,
+        min_value_b=min_value_b,
+        setup=setup,
+        custom_cfg=custom_cfg,
+    )
+    symbols = tuple(candidates.Symbol.astype(str).tolist())
+
+    tech, yahoo_errors = cached_yahoo_technical_dataset(symbols)
+    if tech.empty:
+        d = tech.copy()
+    else:
+        foreign_cols = ["Symbol", "Company", "Sector", "SubSector", "IDXDate"]
+        for n in (5, 10, 20, 60):
+            foreign_cols += [
+                f"ForeignNet{n}",
+                f"ForeignIntensity{n}",
+                f"ForeignPositiveDays{n}",
+            ]
+        foreign_cols = [c for c in foreign_cols if c in candidates.columns]
+        d = tech.merge(candidates[foreign_cols], on="Symbol", how="left")
+
+        d["Company"] = d.get("Company", pd.Series(index=d.index, dtype=object)).fillna(d.Symbol)
+        d["Sector"] = d.get("Sector", pd.Series(index=d.index, dtype=object)).fillna("IDX")
+
+        for n in (5, 10, 20, 60):
+            for col in (f"ForeignNet{n}", f"ForeignIntensity{n}", f"ForeignPositiveDays{n}"):
+                if col not in d:
+                    d[col] = np.nan
+
+            foreign_score = np.clip(
+                (d[f"ForeignIntensity{n}"].fillna(0) + 10) / 20 * 100,
+                0,
+                100,
+            )
+            tech_score = (
+                d.Trend.astype(int) * 30
+                + d.AboveMA200.astype(int) * 15
+                + d[f"Breakout{n}"].astype(int) * 20
+                + d.MACDPositive.astype(int) * 15
+                + (d[f"RelVolume{n}"].fillna(0) >= 1.2).astype(int) * 20
+            )
+            d[f"SmartScore{n}"] = (
+                0.35 * d[f"MoneyFlowScore{n}"]
+                + 0.30 * foreign_score
+                + 0.35 * tech_score
+            ).round().clip(0, 100)
+
+    yahoo_dates = []
+    idx_dates = []
+    if not d.empty:
+        yahoo_dates = [x for x in d.YahooDate.dropna().astype(str) if x]
+        if "IDXDate" in d:
+            idx_dates = [x for x in d.IDXDate.dropna().astype(str) if x]
+
+    status = {
+        "as_of": max(yahoo_dates + idx_dates) if (yahoo_dates or idx_dates) else idx_status.get("idx_as_of", "latest"),
+        "universe": universe,
+        "idx_total": idx_status.get("idx_total", 0),
+        "stage1_universe": stage_status["universe_count"],
+        "stage1_liquid": stage_status["liquid_count"],
+        "stage1_candidates": stage_status["candidate_count"],
+        "yahoo_ok": int(d.Symbol.nunique()) if not d.empty else 0,
+        "yahoo_failed": len(yahoo_errors),
+        "idx_foreign_available": True,
+        "meta_error": idx_status.get("meta_error"),
+    }
     return d.reset_index(drop=True), status
+
+def _lookback_view(d: pd.DataFrame, lookback: int) -> pd.DataFrame:
+    """Expose selected 5D/10D/20D/60D metrics through the existing screen columns."""
+    if lookback not in (5, 10, 20, 60):
+        raise ValueError("Unsupported Smart Money lookback.")
+
+    x = d.copy()
+    mapping = {
+        "Return20": f"Return{lookback}",
+        "Value20B": f"Value{lookback}B",
+        "VWAPPct": f"VWAPPct{lookback}",
+        "CMF20": f"CMF{lookback}",
+        "RelVolume": f"RelVolume{lookback}",
+        "Breakout20": f"Breakout{lookback}",
+        "OBVUp": f"OBVUp{lookback}",
+        "MoneyFlowScore": f"MoneyFlowScore{lookback}",
+        "ForeignNet20": f"ForeignNet{lookback}",
+        "ForeignIntensity20": f"ForeignIntensity{lookback}",
+        "ForeignPositiveDays": f"ForeignPositiveDays{lookback}",
+        "SmartScore": f"SmartScore{lookback}",
+    }
+    for target, source in mapping.items():
+        x[target] = x[source] if source in x.columns else np.nan
+
+    # Short-term confirmation remains the latest 5 sessions for all horizons.
+    x["ForeignNet5"] = x["ForeignNet5"] if "ForeignNet5" in x.columns else np.nan
+    return x
 
 
 def _preset_filter(d: pd.DataFrame, preset: str, min_value_b: float) -> pd.DataFrame:
@@ -317,7 +553,7 @@ def _signal_chips(r: pd.Series) -> str:
     if pd.notna(r.RelVolume):
         parts.append(_chip(f"RelVol {r.RelVolume:.2f}×", "good" if r.RelVolume >= 1.2 else "neutral"))
     if r.Breakout20:
-        parts.append(_chip("20D breakout", "good"))
+        parts.append(_chip("Lookback breakout", "good"))
     if r.OBVUp:
         parts.append(_chip("OBV ↑", "good"))
     return '<div class="sm-chip-wrap">' + ''.join(parts) + '</div>'
@@ -386,12 +622,20 @@ def render_smart_money(navigate=None) -> None:
         st.markdown('<div class="sm-page-title">Smart Money Screener</div>', unsafe_allow_html=True)
     with head2:
         if st.button('', icon=':material/refresh:', help='Refresh Smart Money data', key='smart_refresh', width='stretch'):
-            cached_smart_money_dataset.clear()
+            cached_idx_smart_base.clear()
+            cached_yahoo_technical_dataset.clear()
             st.rerun()
 
     with st.container(border=True):
-        st.markdown('<div class="sm-setup-title">◉ &nbsp; Screening setup</div><div class="sm-setup-sub">Choose a signal model, then refine its universe below.</div>', unsafe_allow_html=True)
-        mode = st.segmented_control('Setup mode', ['Presets', 'Custom', 'Saved'], default='Presets', key='smart_mode', label_visibility='collapsed') or 'Presets'
+        st.markdown(
+            '<div class="sm-setup-title">◉ &nbsp; Screening setup</div>'
+            '<div class="sm-setup-sub">Choose a signal model, then refine its universe below.</div>',
+            unsafe_allow_html=True,
+        )
+        mode = st.segmented_control(
+            'Setup mode', ['Presets', 'Custom', 'Saved'],
+            default='Presets', key='smart_mode', label_visibility='collapsed'
+        ) or 'Presets'
 
         custom_cfg = {
             "min_value": 0.5,
@@ -404,41 +648,66 @@ def render_smart_money(navigate=None) -> None:
             "breakout": False,
         }
         active_label = st.session_state.smart_preset
+        saved_has_preset = False
+
         if mode == 'Presets':
             names = list(PRESETS)
             r1 = st.columns(2)
             r2 = st.columns(2)
             for col, name in zip(r1 + r2, names):
                 active = st.session_state.smart_preset == name
-                if col.button(('● ' if active else '○ ') + name, key='smart_preset_' + name, width='stretch', type='primary' if active else 'secondary'):
+                if col.button(
+                    ('● ' if active else '○ ') + name,
+                    key='smart_preset_' + name,
+                    width='stretch',
+                    type='primary' if active else 'secondary',
+                ):
                     st.session_state.smart_preset = name
                     st.rerun()
             active_label = st.session_state.smart_preset
+
         elif mode == 'Custom':
             c1, c2, c3 = st.columns(3)
-            custom_cfg["min_value"] = c1.number_input('Min avg traded value (Rp B/day)', 0.0, 10000.0, 0.5, 0.5, key='sm_min_value_custom')
-            custom_cfg["rsi_min"], custom_cfg["rsi_max"] = c2.slider('RSI range', 0, 100, (0, 100), key='sm_rsi')
-            custom_cfg["relvol"] = c3.number_input('Min relative volume', 0.0, 20.0, 0.0, 0.1, key='sm_relvol')
+            custom_cfg["min_value"] = c1.number_input(
+                'Min avg traded value (Rp B/day)', 0.0, 10000.0, 0.5, 0.5,
+                key='sm_min_value_custom'
+            )
+            custom_cfg["rsi_min"], custom_cfg["rsi_max"] = c2.slider(
+                'RSI range', 0, 100, (0, 100), key='sm_rsi'
+            )
+            custom_cfg["relvol"] = c3.number_input(
+                'Min relative volume', 0.0, 20.0, 0.0, 0.1, key='sm_relvol'
+            )
             f1, f2, f3, f4 = st.columns(4)
             custom_cfg["trend"] = f1.checkbox('Trend', key='sm_trend')
             custom_cfg["foreign"] = f2.checkbox('Foreign +', key='sm_foreign')
             custom_cfg["moneyflow"] = f3.checkbox('CMF +', key='sm_moneyflow')
-            custom_cfg["breakout"] = f4.checkbox('20D breakout', key='sm_breakout')
+            custom_cfg["breakout"] = f4.checkbox('Lookback breakout', key='sm_breakout')
             active_label = 'Custom Screen'
+
         else:
             if st.session_state.smart_saved:
-                saved_name = st.selectbox('Saved setup', list(st.session_state.smart_saved), key='sm_saved_select')
+                saved_name = st.selectbox(
+                    'Saved setup', list(st.session_state.smart_saved), key='sm_saved_select'
+                )
                 saved = st.session_state.smart_saved[saved_name]
                 active_label = saved.get('label', saved_name)
                 custom_cfg.update(saved.get('custom', {}))
                 if saved.get('preset'):
                     st.session_state.smart_preset = saved['preset']
+                    saved_has_preset = True
             else:
                 st.info('No saved screens yet. Save a preset or custom setup first.')
 
         save1, save2 = st.columns([4, 1])
-        save_name = save1.text_input('Save current setup as', placeholder='e.g. Foreign + Trend', label_visibility='collapsed', key='sm_save_name')
-        if save2.button('Save', icon=':material/save:', width='stretch', disabled=not save_name.strip(), key='sm_save'):
+        save_name = save1.text_input(
+            'Save current setup as', placeholder='e.g. Foreign + Trend',
+            label_visibility='collapsed', key='sm_save_name'
+        )
+        if save2.button(
+            'Save', icon=':material/save:', width='stretch',
+            disabled=not save_name.strip(), key='sm_save'
+        ):
             _save_current(save_name, {
                 'label': active_label,
                 'preset': st.session_state.smart_preset if mode == 'Presets' else None,
@@ -446,63 +715,151 @@ def render_smart_money(navigate=None) -> None:
             })
             st.success('Screen saved for this session.')
 
-    try:
-        with st.spinner('Building Smart Money universe · Yahoo technicals + IDX flow…'):
-            data, status = cached_smart_money_dataset()
-    except Exception as exc:
-        st.error(f'Smart Money data could not be built: {exc}')
-        return
-
-    asof = status.get('as_of', 'latest')
-    st.markdown(f'<div class="sm-asof">As of {html.escape(str(asof))} · {status.get("yahoo_ok",0)}/{status.get("requested",0)} Yahoo tickers usable</div>', unsafe_allow_html=True)
-    if not status.get('idx_foreign_available', False):
-        st.warning('IDX per-stock foreign history is unavailable right now. Foreign presets may return no matches; technical presets still work.')
-
     with st.container(border=True):
-        title = active_label if mode != 'Saved' else active_label
-        desc = PRESETS.get(title, {}).get('description', 'Custom smart-money and technical conditions.')
-        st.markdown(f'<div class="sm-results-title">{html.escape(title)}</div><div class="sm-results-sub">{html.escape(desc)}</div>', unsafe_allow_html=True)
-        f1, f2, f3 = st.columns([1, 1.25, 1.5])
-        lookback = f1.selectbox('Lookback', ['20D'], key='sm_lookback')
-        min_value = f2.number_input('Min value (Rp B/day)', 0.0, 10000.0, 0.5 if mode != 'Custom' else float(custom_cfg['min_value']), 0.5, key='sm_result_min_value')
-        f3.text_input('Universe', value='Quality 200', disabled=True, key='sm_universe')
+        title = active_label
+        desc = PRESETS.get(title, {}).get(
+            'description',
+            'Custom smart-money and technical conditions.'
+        )
+        st.markdown(
+            f'<div class="sm-results-title">{html.escape(title)}</div>'
+            f'<div class="sm-results-sub">{html.escape(desc)}</div>',
+            unsafe_allow_html=True,
+        )
 
-        if mode == 'Custom' or (mode == 'Saved' and not st.session_state.smart_saved.get(st.session_state.get('sm_saved_select',''), {}).get('preset')):
+        f1, f2, f3 = st.columns([1, 1.25, 1.45])
+        lookback = f1.selectbox(
+            'Lookback', ['5D', '10D', '20D', '60D'],
+            index=2, key='sm_lookback'
+        )
+        min_default = 0.5 if mode != 'Custom' else float(custom_cfg['min_value'])
+        min_value = f2.number_input(
+            'Min value (Rp B/day)', 0.0, 10000.0, min_default, 0.5,
+            key='sm_result_min_value'
+        )
+        universe = f3.selectbox(
+            'Universe', ['Quality 200', 'All IDX'],
+            index=0, key='sm_universe'
+        )
+
+        lookback_n = int(str(lookback).replace('D', ''))
+        if mode == 'Custom':
+            build_setup = 'Custom Screen'
+        elif mode == 'Saved' and not saved_has_preset:
+            build_setup = 'Custom Screen'
+        else:
+            build_setup = st.session_state.smart_preset
+
+        with st.spinner(
+            f'Stage 1: screening {universe} with IDX data · '
+            'Stage 2: confirming candidates with Yahoo technicals…'
+        ):
+            try:
+                data, status = build_smart_money_dataset(
+                    universe=universe,
+                    lookback=lookback_n,
+                    min_value_b=min_value,
+                    setup=build_setup,
+                    custom_cfg=custom_cfg,
+                )
+            except Exception as exc:
+                st.error(f'Smart Money data could not be built: {exc}')
+                return
+
+        asof = status.get('as_of', 'latest')
+        st.markdown(
+            '<div class="sm-asof">'
+            f'As of {html.escape(str(asof))} · '
+            f'{html.escape(universe)}: {status.get("stage1_universe",0)} stocks checked · '
+            f'{status.get("stage1_candidates",0)} Stage-1 candidates · '
+            f'{status.get("yahoo_ok",0)} Yahoo technicals usable'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+
+        if universe == 'All IDX':
+            st.caption(
+                f'All IDX uses a two-stage scan: every available IDX stock is evaluated first; '
+                f'{status.get("stage1_liquid",0)} passed the Rp{min_value:g}B/day liquidity gate '
+                'before Yahoo technical confirmation.'
+            )
+
+        active_data = _lookback_view(data, lookback_n) if not data.empty else data
+
+        is_custom_screen = mode == 'Custom' or (mode == 'Saved' and not saved_has_preset)
+        if is_custom_screen:
             custom_cfg['min_value'] = min_value
-            result = _custom_filter(data, custom_cfg)
+            result = _custom_filter(active_data, custom_cfg) if not active_data.empty else active_data
+            interpretation_setup = 'Custom Screen'
         else:
             preset = st.session_state.smart_preset
-            result = _preset_filter(data, preset, min_value)
+            result = _preset_filter(active_data, preset, min_value) if not active_data.empty else active_data
+            interpretation_setup = preset
 
-        st.markdown(f'<div class="sm-match-count"><b>{len(result)}</b> matches / {len(data)} usable tickers</div>', unsafe_allow_html=True)
+        st.markdown(
+            f'<div class="sm-match-count"><b>{len(result)}</b> matches / '
+            f'{len(active_data)} technical candidates</div>',
+            unsafe_allow_html=True,
+        )
+
         result = result.head(20)
         if result.empty:
-            st.info('No stocks currently match this setup. Lower the minimum value or try another preset.')
+            st.info(
+                'No stocks currently match this setup. Lower the minimum value, '
+                'try another preset, or switch universe.'
+            )
             return
 
         h = st.columns([1.65, .55, .65, .75, 1.95, 1.75, 2.2])
-        for col, label in zip(h, ['Stock', 'Price', '20D %', 'Value 20D', 'Technical', 'Signals', 'What it means']):
-            col.markdown(f'<div class="sm-table-head">{label}</div>', unsafe_allow_html=True)
+        for col, label in zip(
+            h,
+            ['Stock', 'Price', f'{lookback_n}D %', f'Value {lookback_n}D',
+             'Technical', 'Signals', 'What it means']
+        ):
+            col.markdown(
+                f'<div class="sm-table-head">{label}</div>',
+                unsafe_allow_html=True
+            )
         st.markdown('<div class="sm-divider"></div>', unsafe_allow_html=True)
 
-        interpretation_setup = st.session_state.smart_preset if mode != 'Custom' else 'Custom Screen'
         for _, r in result.iterrows():
-            cols = st.columns([1.65, .55, .65, .75, 1.95, 1.75, 2.2], vertical_alignment='center')
+            cols = st.columns(
+                [1.65, .55, .65, .75, 1.95, 1.75, 2.2],
+                vertical_alignment='center'
+            )
             company = html.escape(str(r.Company))
             sector = html.escape(str(r.Sector))
-            cols[0].markdown(f'<div class="sm-stock"><b>{html.escape(r.Symbol)}</b><span>{company}</span><small>{sector}</small></div>', unsafe_allow_html=True)
-            cols[1].markdown(f'<div class="sm-number">{r.Close:,.0f}</div>', unsafe_allow_html=True)
-            ret_class = 'positive' if r.Return20 >= 0 else 'negative'
-            cols[2].markdown(f'<div class="sm-number {ret_class}">{r.Return20:+.2f}%</div>', unsafe_allow_html=True)
-            cols[3].markdown(f'<div class="sm-number">{r.Value20B:.2f}B</div>', unsafe_allow_html=True)
-            cols[4].markdown(_technical_chips(r), unsafe_allow_html=True)
-            cols[5].markdown(_signal_chips(r), unsafe_allow_html=True)
-            level, meaning, meaning_kind = _action_meaning(r, interpretation_setup)
-            cols[6].markdown(
-                f'<div class="sm-meaning sm-meaning-{meaning_kind}"><b>{html.escape(level)}</b><span>{html.escape(meaning)}</span></div>',
+            cols[0].markdown(
+                f'<div class="sm-stock"><b>{html.escape(r.Symbol)}</b>'
+                f'<span>{company}</span><small>{sector}</small></div>',
                 unsafe_allow_html=True,
             )
-            if cols[6].button('Chart', icon=':material/show_chart:', key='sm_chart_' + r.Symbol, width='stretch'):
+            cols[1].markdown(
+                f'<div class="sm-number">{r.Close:,.0f}</div>',
+                unsafe_allow_html=True
+            )
+            ret_class = 'positive' if r.Return20 >= 0 else 'negative'
+            cols[2].markdown(
+                f'<div class="sm-number {ret_class}">{r.Return20:+.2f}%</div>',
+                unsafe_allow_html=True
+            )
+            cols[3].markdown(
+                f'<div class="sm-number">{r.Value20B:.2f}B</div>',
+                unsafe_allow_html=True
+            )
+            cols[4].markdown(_technical_chips(r), unsafe_allow_html=True)
+            cols[5].markdown(_signal_chips(r), unsafe_allow_html=True)
+
+            level, meaning, meaning_kind = _action_meaning(r, interpretation_setup)
+            cols[6].markdown(
+                f'<div class="sm-meaning sm-meaning-{meaning_kind}">'
+                f'<b>{html.escape(level)}</b><span>{html.escape(meaning)}</span></div>',
+                unsafe_allow_html=True,
+            )
+            if cols[6].button(
+                'Chart', icon=':material/show_chart:',
+                key='sm_chart_' + r.Symbol, width='stretch'
+            ):
                 st.session_state.dashboard_symbol = r.Symbol
                 st.session_state.dashboard_search = r.Symbol
                 if navigate:
@@ -510,4 +867,8 @@ def render_smart_money(navigate=None) -> None:
                 st.rerun()
             st.markdown('<div class="sm-row-divider"></div>', unsafe_allow_html=True)
 
-    st.caption('HP Smart Money v1 · technical calculations from Yahoo daily OHLCV; foreign imbalance from IDX daily stock summaries. Scores are screening signals, not recommendations.')
+    st.caption(
+        'HP Smart Money · Quality 200 or All IDX · two-stage IDX→Yahoo scan · '
+        '5D / 10D / 20D / 60D lookbacks. Scores are screening signals, not recommendations.'
+    )
+

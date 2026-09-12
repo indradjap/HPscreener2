@@ -42,3 +42,17 @@ foreign-buy/foreign-sell imbalance when the public IDX endpoint is available. Re
 for 30 minutes. Saved screens are session-only. The foreign metric is expressed as a normalized
 imbalance percentage so the UI does not assume a monetary unit for fields whose public endpoint
 metadata does not explicitly expose one.
+
+## Smart Money universe modes
+
+Smart Money Screener supports **Quality 200** and **All IDX**.
+
+`All IDX` uses a two-stage architecture:
+
+1. Official IDX whole-market daily summaries evaluate every available IDX stock using
+   liquidity, traded value, volume, foreign imbalance, and simple close-based activity.
+2. Only Stage-1 candidates are sent to Yahoo Finance for 2-year OHLCV technical
+   confirmation (MA20/50/200, RSI, Stoch RSI, VWAP, CMF, OBV, MACD and breakouts).
+
+The UI shows the full Stage-1 universe count, candidate count, and successful Yahoo
+technical count so a reduced technical set is never hidden from the user.
