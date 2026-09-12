@@ -124,3 +124,57 @@ div[data-testid="stSelectbox"] > div[data-baseweb="select"]{min-height:44px}
 .sm-chip-wrap{display:flex;gap:5px;flex-wrap:wrap;align-items:center}.sm-chip{display:inline-block;border:1px solid #e1e5e3;border-radius:12px;padding:3px 8px;font-size:10px;color:#5f6963;background:#fff;line-height:1.2;white-space:nowrap}.sm-good{color:#258a59;border-color:#d5eadf;background:#f4fbf7}.sm-bad{color:#d84650;border-color:#f0d8dc;background:#fff7f8}.sm-neutral{color:#606963}
 [data-testid="stSidebar"] button[kind="primary"]{font-weight:650}
 @media(max-width:900px){.sm-page-title{font-size:27px}.sm-table-head{font-size:9px}.sm-chip{font-size:9px;padding:2px 6px}.sm-stock span{font-size:10px}.sm-number{font-size:12px}}
+
+
+/* Smart Money: per-row interpretation */
+.sm-meaning{border:1px solid #e2e7e3;border-radius:10px;padding:8px 9px;margin-bottom:6px;background:#fafcfb;line-height:1.28}
+.sm-meaning b{display:inline-block;font-size:9px;letter-spacing:.8px;border-radius:9px;padding:2px 6px;margin-bottom:5px}
+.sm-meaning span{display:block;font-size:10px;color:#5f6963}
+.sm-meaning-strong{border-color:#d4eadc;background:#f6fbf8}.sm-meaning-strong b{color:#177b4b;background:#def2e6}
+.sm-meaning-developing{border-color:#eadfca;background:#fffaf3}.sm-meaning-developing b{color:#9a681a;background:#f7ead1}
+.sm-meaning-early{border-color:#e3e6e4;background:#fafbfa}.sm-meaning-early b{color:#6f7872;background:#eef1ef}
+@media(max-width:900px){.sm-meaning span{font-size:9px}.sm-meaning{padding:6px 7px}}
+
+
+/* Sidebar menu alignment — keep every menu label on one line */
+@media(min-width:801px){
+  [data-testid="stSidebar"]{
+    min-width:290px!important;
+    max-width:290px!important;
+  }
+}
+[data-testid="stSidebar"] button{
+  width:100%!important;
+}
+[data-testid="stSidebar"] button > div{
+  display:flex!important;
+  flex-direction:row!important;
+  align-items:center!important;
+  justify-content:flex-start!important;
+  gap:12px!important;
+  width:100%!important;
+  min-width:0!important;
+}
+[data-testid="stSidebar"] button [data-testid="stMarkdownContainer"]{
+  min-width:0!important;
+  flex:1 1 auto!important;
+}
+[data-testid="stSidebar"] button [data-testid="stMarkdownContainer"] p{
+  white-space:nowrap!important;
+  overflow:hidden!important;
+  text-overflow:clip!important;
+  margin:0!important;
+  font-size:15px!important;
+  line-height:1.2!important;
+}
+[data-testid="stSidebar"] button [data-testid="stIconMaterial"]{
+  flex:0 0 20px!important;
+  width:20px!important;
+  min-width:20px!important;
+  margin:0!important;
+}
+@media(max-width:800px){
+  [data-testid="stSidebar"] button [data-testid="stMarkdownContainer"] p{
+    font-size:15px!important;
+  }
+}

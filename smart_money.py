@@ -323,6 +323,52 @@ def _signal_chips(r: pd.Series) -> str:
     return '<div class="sm-chip-wrap">' + ''.join(parts) + '</div>'
 
 
+def _action_meaning(r: pd.Series, setup: str) -> tuple[str, str, str]:
+    """Short descriptive interpretation; deliberately not a buy/sell recommendation."""
+    score = float(r.get("SmartScore", 0) or 0)
+    if score >= 75:
+        level, kind = "STRONG", "strong"
+    elif score >= 55:
+        level, kind = "DEVELOPING", "developing"
+    else:
+        level, kind = "EARLY", "early"
+
+    if setup == "Foreign Accumulation":
+        if float(r.get("ForeignIntensity20", 0) or 0) >= 5 and float(r.get("ForeignNet5", 0) or 0) > 0:
+            text = "Foreign accumulation is persistent; watch for price and volume confirmation."
+        else:
+            text = "Foreign flow is positive, but accumulation strength is still developing."
+    elif setup == "Money Flow Accumulation":
+        if bool(r.get("OBVUp", False)) and float(r.get("CMF20", 0) or 0) > 0:
+            text = "CMF and OBV point to accumulation pressure before a larger price move."
+        else:
+            text = "Money flow is improving, but confirmation across volume signals is mixed."
+    elif setup == "Technical Breakout":
+        if bool(r.get("Breakout20", False)) and float(r.get("RelVolume", 0) or 0) >= 1.2:
+            text = "Breakout is volume-confirmed; watch whether price holds above prior resistance."
+        elif bool(r.get("Trend", False)):
+            text = "Trend is strengthening, but this is not yet a fully confirmed fresh breakout."
+        else:
+            text = "Breakout evidence is early; confirmation from trend and volume is still limited."
+    elif setup == "Smart Money + Technical":
+        if float(r.get("ForeignIntensity20", 0) or 0) > 0 and bool(r.get("Trend", False)) and bool(r.get("MACDPositive", False)):
+            text = "Flow, trend and momentum are aligned; this is a higher-quality confirmation setup."
+        else:
+            text = "Some smart-money and technical evidence aligns, but confirmation is incomplete."
+    else:
+        pieces = []
+        if float(r.get("ForeignIntensity20", 0) or 0) > 0:
+            pieces.append("foreign flow positive")
+        if float(r.get("CMF20", 0) or 0) > 0:
+            pieces.append("money flow positive")
+        if bool(r.get("Trend", False)):
+            pieces.append("trend constructive")
+        if bool(r.get("Breakout20", False)):
+            pieces.append("breakout active")
+        text = ("Custom screen: " + ", ".join(pieces) + ".") if pieces else "Custom conditions match, but conviction is still limited."
+    return level, text, kind
+
+
 def _save_current(name: str, setup: dict) -> None:
     if "smart_saved" not in st.session_state:
         st.session_state.smart_saved = {}
@@ -434,13 +480,14 @@ def render_smart_money(navigate=None) -> None:
             st.info('No stocks currently match this setup. Lower the minimum value or try another preset.')
             return
 
-        h = st.columns([1.9, .7, .75, .85, 2.45, 2.25, .7])
-        for col, label in zip(h, ['Stock', 'Price', '20D %', 'Value 20D', 'Technical', 'Signals', 'Action']):
+        h = st.columns([1.65, .55, .65, .75, 1.95, 1.75, 2.2])
+        for col, label in zip(h, ['Stock', 'Price', '20D %', 'Value 20D', 'Technical', 'Signals', 'What it means']):
             col.markdown(f'<div class="sm-table-head">{label}</div>', unsafe_allow_html=True)
         st.markdown('<div class="sm-divider"></div>', unsafe_allow_html=True)
 
+        interpretation_setup = st.session_state.smart_preset if mode != 'Custom' else 'Custom Screen'
         for _, r in result.iterrows():
-            cols = st.columns([1.9, .7, .75, .85, 2.45, 2.25, .7], vertical_alignment='center')
+            cols = st.columns([1.65, .55, .65, .75, 1.95, 1.75, 2.2], vertical_alignment='center')
             company = html.escape(str(r.Company))
             sector = html.escape(str(r.Sector))
             cols[0].markdown(f'<div class="sm-stock"><b>{html.escape(r.Symbol)}</b><span>{company}</span><small>{sector}</small></div>', unsafe_allow_html=True)
@@ -450,6 +497,11 @@ def render_smart_money(navigate=None) -> None:
             cols[3].markdown(f'<div class="sm-number">{r.Value20B:.2f}B</div>', unsafe_allow_html=True)
             cols[4].markdown(_technical_chips(r), unsafe_allow_html=True)
             cols[5].markdown(_signal_chips(r), unsafe_allow_html=True)
+            level, meaning, meaning_kind = _action_meaning(r, interpretation_setup)
+            cols[6].markdown(
+                f'<div class="sm-meaning sm-meaning-{meaning_kind}"><b>{html.escape(level)}</b><span>{html.escape(meaning)}</span></div>',
+                unsafe_allow_html=True,
+            )
             if cols[6].button('Chart', icon=':material/show_chart:', key='sm_chart_' + r.Symbol, width='stretch'):
                 st.session_state.dashboard_symbol = r.Symbol
                 st.session_state.dashboard_search = r.Symbol
