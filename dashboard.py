@@ -8,12 +8,13 @@ import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import streamlit as st
+import yfinance as yf
 
 from market import parse_csv
 from yahoo_download import download_universe
 
 
-COMPANY_NAMES = {
+COMPANY_NAME_OVERRIDES = {
     'BBCA': 'Bank Central Asia',
     'BBRI': 'Bank Rakyat Indonesia',
     'BMRI': 'Bank Mandiri',
@@ -30,6 +31,7 @@ COMPANY_NAMES = {
     'AMRT': 'Sumber Alfaria Trijaya',
     'MEDC': 'Medco Energi Internasional',
     'PTBA': 'Bukit Asam',
+    'PADA': 'Personel Alih Daya',
 }
 
 PERIOD_BARS = {'1M': 22, '3M': 66, '6M': 132, '1Y': 260}
@@ -72,6 +74,30 @@ def fetch_dashboard_stock(symbol: str, period: str = '2y') -> pd.DataFrame:
 @st.cache_data(ttl=900, show_spinner=False)
 def cached_dashboard_stock(symbol: str) -> pd.DataFrame:
     return fetch_dashboard_stock(symbol, '2y')
+
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def cached_company_name(symbol: str) -> str:
+    symbol = normalize_dashboard_symbol(symbol)
+    if symbol in COMPANY_NAME_OVERRIDES:
+        return COMPANY_NAME_OVERRIDES[symbol]
+    try:
+        t = yf.Ticker(symbol + '.JK')
+        info = {}
+        try:
+            info = t.get_info() or {}
+        except Exception:
+            info = getattr(t, 'info', {}) or {}
+        for key in ('longName', 'shortName', 'displayName', 'name'):
+            val = info.get(key)
+            if isinstance(val, str) and val.strip():
+                clean = val.strip()
+                if clean.upper().endswith('.JK'):
+                    clean = clean[:-3].strip()
+                return clean
+    except Exception:
+        pass
+    return symbol
 
 
 def _fmt_volume(value: float) -> str:
@@ -256,7 +282,7 @@ def render_dashboard(navigate=None) -> None:
             st.markdown(
                 f'<div class="stock-identity">'
                 f'<div><div class="stock-symbol">{symbol}</div>'
-                f'<div class="stock-name">{COMPANY_NAMES.get(symbol, symbol + ".JK")}</div></div></div>',
+                f'<div class="stock-name">{cached_company_name(symbol)}</div></div></div>',
                 unsafe_allow_html=True,
             )
         with header_right:
