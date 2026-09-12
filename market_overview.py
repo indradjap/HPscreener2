@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+MARKET_OVERVIEW_TIMEFRAME = 'Daily'
+
 import html
 import math
 
@@ -306,7 +308,7 @@ def _render_heatmap_card(heatmap: pd.DataFrame | None, note: str | None, error: 
             )
         with c3:
             color_by = st.selectbox(
-                'Color by', ['Change 1D, %'],
+                'Color by', ['Daily Change, %'],
                 key='heat_color_by', label_visibility='collapsed'
             )
         with c4:
@@ -365,7 +367,7 @@ def _mover_metric_value(row: pd.Series, mode: str) -> tuple[str, str]:
 
 
 def _render_top_movers(market: pd.DataFrame | None, error: str | None = None) -> None:
-    st.markdown('<div class="movers-title">Top Movers</div>', unsafe_allow_html=True)
+    st.markdown('<div class="movers-title">Top Movers <span class="market-daily-inline">DAILY</span></div>', unsafe_allow_html=True)
     if market is None or market.empty:
         detail = html.escape(error or 'Waiting for latest IDX market summary.')
         st.markdown(
@@ -427,11 +429,18 @@ def _render_top_movers(market: pd.DataFrame | None, error: str | None = None) ->
 
 
 def render_market_overview(cached_idx_flow, cached_idx_heatmap) -> None:
-    st.markdown(
-        '<div class="market-title">Market Overview</div>'
-        '<div class="market-subtitle">Official IDX investor flow and whole-market sector heatmap.</div>',
-        unsafe_allow_html=True,
-    )
+    header_left, header_right = st.columns([5.4, 1.0], vertical_alignment='center')
+    with header_left:
+        st.markdown(
+            '<div class="market-title">Market Overview</div>'
+            '<div class="market-subtitle">Official IDX daily investor flow, sector heatmap and top movers.</div>',
+            unsafe_allow_html=True,
+        )
+    with header_right:
+        st.markdown(
+            f'<div class="market-timeframe"><span>TIMEFRAME</span><b>{MARKET_OVERVIEW_TIMEFRAME.upper()}</b></div>',
+            unsafe_allow_html=True,
+        )
 
     flow = None
     flow_error = None

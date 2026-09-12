@@ -192,3 +192,11 @@ Structural risk/reward warnings are no longer mixed into `Invalidation / avoid`.
 - `Risk warning` contains structural RR observations such as nearby resistance below ~1.5R or below the ideal ~2R first-target room.
 
 This keeps a poor Structure RR from being interpreted as automatically invalidating the setup.
+
+
+## Market Overview timeframe
+
+Market Overview is explicitly fixed to `Daily`.
+Investor flow uses the latest IDX trading session, the sector heatmap is colored by
+daily percentage change, and Top Movers is based on the latest official IDX daily
+stock summary.
