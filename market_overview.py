@@ -71,11 +71,33 @@ def _flow_figure(metric: dict[str, float], mode: str) -> go.Figure:
     fig.update_xaxes(showgrid=False, zeroline=False, tickfont=dict(size=12), fixedrange=True)
     fig.update_yaxes(showticklabels=False, gridcolor="#edf0ee", griddash="dot", zeroline=False, title=None, range=[0, ymax + pad], fixedrange=True)
 
+    # Labels stay inside each segment, with automatic high-contrast font choices:
+    # light bars -> dark text, dark bars -> light text.
     ann = [
-        dict(x="Foreign", y=f_sell + f_buy*0.92, text=f"<span style='color:#3b9a8f'><b>F Buy</b></span><br><b>{_flow_format(f_buy, mode)}</b>", showarrow=False, xanchor="center", yanchor="bottom", font=dict(size=12, color="#1f2521")),
-        dict(x="Foreign", y=max(f_sell*0.03, ymax*0.015), text=f"<span style='color:#2f7a74'><b>F Sell</b></span><br><b>{_flow_format(f_sell, mode)}</b>", showarrow=False, xanchor="center", yanchor="bottom", font=dict(size=12, color="#1f2521")),
-        dict(x="Domestic", y=d_sell + d_buy*0.92, text=f"<span style='color:#4b43e3'><b>D Buy</b></span><br><b>{_flow_format(d_buy, mode)}</b>", showarrow=False, xanchor="center", yanchor="bottom", font=dict(size=12, color="#1f2521")),
-        dict(x="Domestic", y=max(d_sell*0.03, ymax*0.015), text=f"<span style='color:#3d36c4'><b>D Sell</b></span><br><b>{_flow_format(d_sell, mode)}</b>", showarrow=False, xanchor="center", yanchor="bottom", font=dict(size=12, color="#1f2521")),
+        dict(
+            x="Foreign", y=f_sell + f_buy * 0.52,
+            text=f"<b>F Buy</b><br><b>{_flow_format(f_buy, mode)}</b>",
+            showarrow=False, xanchor="center", yanchor="middle",
+            font=dict(size=12, color="#173a35"),
+        ),
+        dict(
+            x="Foreign", y=max(f_sell * 0.50, ymax * 0.025),
+            text=f"<b>F Sell</b><br><b>{_flow_format(f_sell, mode)}</b>",
+            showarrow=False, xanchor="center", yanchor="middle",
+            font=dict(size=12, color="#f4fffc"),
+        ),
+        dict(
+            x="Domestic", y=d_sell + d_buy * 0.52,
+            text=f"<b>D Buy</b><br><b>{_flow_format(d_buy, mode)}</b>",
+            showarrow=False, xanchor="center", yanchor="middle",
+            font=dict(size=12, color="#25205f"),
+        ),
+        dict(
+            x="Domestic", y=max(d_sell * 0.50, ymax * 0.025),
+            text=f"<b>D Sell</b><br><b>{_flow_format(d_sell, mode)}</b>",
+            showarrow=False, xanchor="center", yanchor="middle",
+            font=dict(size=12, color="#f7f6ff"),
+        ),
     ]
     fig.update_layout(annotations=ann)
     return fig
