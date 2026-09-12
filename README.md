@@ -103,3 +103,9 @@ targets round up to valid executable prices.
   `sum(ForeignBuy - ForeignSell) / sum(abs(ForeignBuy) + abs(ForeignSell)) * 100`.
 - If IDX history is temporarily unavailable, Stock Analysis remains usable and the
   Foreign 20D field shows a dash rather than failing the whole page.
+
+## Stock Analysis Price card UI
+
+The Price card now shows `20D Return` as a separate labeled row inside the card,
+rather than using Streamlit's compact metric delta. This prevents the percentage
+from being truncated while keeping positive/negative color semantics.

@@ -462,7 +462,16 @@ def render_stock_analysis(navigate=None) -> None:
         )
 
         m = st.columns(6)
-        m[0].metric('Price', _fmt_price(r.Close), f'20D Return {_fmt_pct(r.Return20)}')
+        return_class = 'positive' if r.Return20 >= 0 else 'negative'
+        m[0].markdown(
+            f'<div class="sa-price-card">'
+            f'<span class="sa-price-label">Price</span>'
+            f'<b class="sa-price-value">{_fmt_price(r.Close)}</b>'
+            f'<div class="sa-return-row"><span>20D Return</span>'
+            f'<strong class="{return_class}">{_fmt_pct(r.Return20)}</strong></div>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
         m[1].metric('RSI 14', f'{r.RSI:.0f}')
         m[2].metric('ADX 14', f'{r.ADX:.0f}')
         m[3].metric('Rel Volume', f'{r.RelVolume:.2f}×')
