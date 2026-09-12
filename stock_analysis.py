@@ -237,6 +237,44 @@ def _rr_targets(entry_mid: float, stop: float, reference_close: float) -> dict:
     }
 
 
+def _structure_rr(entry_mid: float, stop: float, levels: dict) -> dict:
+    """Nearest meaningful resistance sanity-check for the mechanical R ladder."""
+    risk = max(entry_mid - stop, entry_mid * 0.005)
+    candidates = []
+    for name, value in [
+        (levels.get('Resistance1Name', 'Resistance 1'), levels.get('Resistance1')),
+        (levels.get('Resistance2Name', 'Resistance 2'), levels.get('Resistance2')),
+        ('20D Pivot', levels.get('Pivot')),
+        ('55D Resistance', levels.get('High55')),
+    ]:
+        if value is not None and pd.notna(value) and float(value) > entry_mid:
+            candidates.append((str(name), float(value)))
+
+    if not candidates:
+        return {
+            'StructureResistance': np.nan,
+            'StructureResistanceName': '—',
+            'StructureRR': np.nan,
+            'StructureRRQuality': 'UNKNOWN',
+        }
+
+    name, resistance = min(candidates, key=lambda x: x[1])
+    rr = max((resistance - entry_mid) / risk, 0.0)
+    if rr >= 2.0:
+        quality = 'GOOD'
+    elif rr >= 1.5:
+        quality = 'ACCEPTABLE'
+    else:
+        quality = 'TIGHT'
+
+    return {
+        'StructureResistance': resistance,
+        'StructureResistanceName': name,
+        'StructureRR': rr,
+        'StructureRRQuality': quality,
+    }
+
+
 def _entry_plan(r: pd.Series, levels: dict) -> dict:
     close = float(r.Close)
     atr = float(r.ATR) if pd.notna(r.ATR) and r.ATR > 0 else close * 0.03
@@ -296,6 +334,7 @@ def _entry_plan(r: pd.Series, levels: dict) -> dict:
     stop = round_idx_price(stop, close, 'floor')
     entry_mid = (entry_low + entry_high) / 2
     primary_rr = _rr_targets(entry_mid, stop, close)
+    primary_structure = _structure_rr(entry_mid, stop, levels)
 
     # Alternative breakout scenario is always available as a conditional plan.
     breakout_trigger = levels['Resistance1']
@@ -310,6 +349,7 @@ def _entry_plan(r: pd.Series, levels: dict) -> dict:
     alt_stop_raw = max(valid_alt) if valid_alt else alt_low - 1.7 * atr
     alt_stop = round_idx_price(alt_stop_raw, close, 'floor')
     alt_rr = _rr_targets(alt_mid, alt_stop, close)
+    alt_structure = _structure_rr(alt_mid, alt_stop, levels)
 
     invalidations = []
     invalidations.append(f'Daily close below {_fmt_price(stop)} invalidates the primary risk structure.')
@@ -324,16 +364,30 @@ def _entry_plan(r: pd.Series, levels: dict) -> dict:
     if breakout_active:
         invalidations.append('A breakout that falls back below the pivot on weak volume is a failed-breakout warning.')
 
+    if pd.notna(primary_structure['StructureRR']) and primary_structure['StructureRR'] < 1.5:
+        invalidations.append(
+            f'Nearest resistance offers only {primary_structure["StructureRR"]:.1f}R; '
+            'the setup is structurally tight even though the mechanical TP ladder extends further.'
+        )
+
     return {
         'Status': status, 'StatusKind': status_kind,
         'PrimaryName': primary_name,
         'EntryLow': entry_low, 'EntryHigh': entry_high, 'EntryMid': entry_mid,
         'Stop': stop, **primary_rr,
+        'StructureResistance': primary_structure['StructureResistance'],
+        'StructureResistanceName': primary_structure['StructureResistanceName'],
+        'StructureRR': primary_structure['StructureRR'],
+        'StructureRRQuality': primary_structure['StructureRRQuality'],
         'PlanNote': plan_note,
         'AltName': 'Breakout Entry', 'AltTrigger': breakout_trigger,
         'AltEntryLow': alt_low, 'AltEntryHigh': alt_high, 'AltStop': alt_stop,
         'AltT1': alt_rr['T1'], 'AltT2': alt_rr['T2'], 'AltT3': alt_rr['T3'],
         'AltRiskPct': alt_rr['RiskPct'],
+        'AltStructureResistance': alt_structure['StructureResistance'],
+        'AltStructureResistanceName': alt_structure['StructureResistanceName'],
+        'AltStructureRR': alt_structure['StructureRR'],
+        'AltStructureRRQuality': alt_structure['StructureRRQuality'],
         'IDXFraction': idx_price_fraction(close),
         'FractionReferenceClose': close,
         'Invalidations': invalidations,
@@ -555,13 +609,19 @@ def render_stock_analysis(navigate=None) -> None:
                 f'<div class="sa-plan-grid">'
                 f'<div><span>Entry zone</span><b>{_fmt_price(plan["EntryLow"])}–{_fmt_price(plan["EntryHigh"])}</b></div>'
                 f'<div><span>Stop</span><b>{_fmt_price(plan["Stop"])}</b></div>'
-                f'<div><span>Target 1</span><b>{_fmt_price(plan["T1"])}</b><small>2R</small></div>'
-                f'<div><span>Target 2</span><b>{_fmt_price(plan["T2"])}</b><small>3R</small></div>'
-                f'<div><span>Target 3</span><b>{_fmt_price(plan["T3"])}</b><small>4R</small></div>'
+                f'<div><span>Target 1</span><b>{_fmt_price(plan["T1"])}</b><small>≈2R · preferred ≥1.5R</small></div>'
+                f'<div><span>Target 2</span><b>{_fmt_price(plan["T2"])}</b><small>≈3R</small></div>'
+                f'<div><span>Target 3</span><b>{_fmt_price(plan["T3"])}</b><small>≈4R+</small></div>'
                 f'<div><span>Risk to stop</span><b>{plan["RiskPct"]:.1f}%</b></div>'
+                f'<div><span>Nearest resistance</span><b>{_fmt_price(plan["StructureResistance"])}</b><small>{html.escape(str(plan["StructureResistanceName"]))}</small></div>'
+                f'<div><span>Structure RR</span><b>{"—" if pd.isna(plan["StructureRR"]) else f"{plan["StructureRR"]:.1f}R"}</b><small>{html.escape(str(plan["StructureRRQuality"]))}</small></div>'
                 f'</div>', unsafe_allow_html=True
             )
-            st.caption(plan['PlanNote'])
+            st.caption(
+                plan['PlanNote']
+                + ' Profit-taking framework: TP1 ideally around 2R (preferably at least ~1.5R), '
+                  'TP2 around 3R, and TP3 around 4R+. Nearest resistance is shown separately as a structural sanity check.'
+            )
 
     with p2:
         with st.container(border=True):
@@ -571,12 +631,17 @@ def render_stock_analysis(navigate=None) -> None:
                 f'<div><span>Trigger</span><b>&gt; {_fmt_price(plan["AltTrigger"])}</b></div>'
                 f'<div><span>Entry zone</span><b>{_fmt_price(plan["AltEntryLow"])}–{_fmt_price(plan["AltEntryHigh"])}</b></div>'
                 f'<div><span>Stop</span><b>{_fmt_price(plan["AltStop"])}</b></div>'
-                f'<div><span>Target 1</span><b>{_fmt_price(plan["AltT1"])}</b><small>2R</small></div>'
-                f'<div><span>Target 2</span><b>{_fmt_price(plan["AltT2"])}</b><small>3R</small></div>'
-                f'<div><span>Target 3</span><b>{_fmt_price(plan["AltT3"])}</b><small>4R</small></div>'
+                f'<div><span>Target 1</span><b>{_fmt_price(plan["AltT1"])}</b><small>≈2R · preferred ≥1.5R</small></div>'
+                f'<div><span>Target 2</span><b>{_fmt_price(plan["AltT2"])}</b><small>≈3R</small></div>'
+                f'<div><span>Target 3</span><b>{_fmt_price(plan["AltT3"])}</b><small>≈4R+</small></div>'
+                f'<div><span>Nearest resistance</span><b>{_fmt_price(plan["AltStructureResistance"])}</b><small>{html.escape(str(plan["AltStructureResistanceName"]))}</small></div>'
+                f'<div><span>Structure RR</span><b>{"—" if pd.isna(plan["AltStructureRR"]) else f"{plan["AltStructureRR"]:.1f}R"}</b><small>{html.escape(str(plan["AltStructureRRQuality"]))}</small></div>'
                 f'</div>', unsafe_allow_html=True
             )
-            st.caption('Alternative plan only activates if price clears resistance/pivot with healthy participation; avoid treating a weak-volume poke as confirmation.')
+            st.caption(
+                'Alternative plan only activates if price clears resistance/pivot with healthy participation. '
+                'Targets use the same ~2R / ~3R / ~4R+ ladder, while Structure RR shows whether nearby resistance makes that ladder realistic.'
+            )
 
     s1, s2 = st.columns([1.35, 1], vertical_alignment='top')
     with s1:

@@ -116,3 +116,58 @@ from being truncated while keeping positive/negative color semantics.
 - Replaced mixed Streamlit/custom metric row with fully custom aligned metric cards.
 - Price, RSI, ADX, Rel Volume, CMF20, and Foreign 20D now share the same visual height.
 - Added wider inner spacing inside the Stock Analysis summary panel so the metric boxes no longer feel too close to the outer frame.
+
+## Stock Pick — Buy on Support / Rebound
+
+A dedicated support/rebound setup has been added without replacing the original
+Stock Pick ranking model.
+
+Hard filters (all required):
+- Near Support
+- No Breakdown
+- Recent Correction
+
+Timing score (0–100):
+- Stoch RSI Oversold: 10
+- Stoch RSI Golden Cross: 15
+- MACD Improving: 10
+- MACD Golden Cross: 15
+- MACD Positive: 10
+- Drying Pullback Volume: 8
+- Rebound Volume: 10
+- Reversal Candle at support: 7
+- Psychological Level: 5
+- Risk/Reward: up to 10
+
+When this setup is selected, the table uses the support score and a support-specific
+entry / stop / target plan. Other Stock Pick setup modes retain their original logic.
+
+## Swing target framework
+
+Stock Pick now uses a consistent risk-multiple ladder for planned exits:
+
+- Stop: below structural support / invalidation with an ATR buffer, rounded to the valid IDX fraction.
+- `R = entry midpoint - stop`.
+- TP1: approximately 2R (preferred minimum is about 1.5R).
+- TP2: approximately 3R.
+- TP3: approximately 4R.
+
+For Buy on Support / Rebound, the nearest meaningful resistance is still used as a
+structural risk/reward quality check. This prevents a mathematically attractive
+2R target from automatically receiving a high Good-RR score when nearby resistance
+would likely cap the move earlier.
+
+## Stock Analysis R-multiple target framework
+
+Stock Analysis now uses the same swing risk framework as Stock Pick:
+
+- Stop: below the relevant structural invalidation / support with ATR buffer.
+- R = entry midpoint - stop.
+- TP1: approximately 2R, with >=1.5R preferred as the minimum attractive first objective.
+- TP2: approximately 3R.
+- TP3: approximately 4R+.
+- Nearest meaningful resistance is shown separately with a Structure RR value.
+
+The R-multiple ladder remains the mechanical profit-taking framework. Structure RR
+is a sanity check: if nearby resistance is below about 1.5R, the setup is flagged as
+structurally tight even if mathematical TP2/TP3 levels are farther away.
