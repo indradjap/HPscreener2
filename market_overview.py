@@ -110,9 +110,10 @@ def _render_activity_card(activity: pd.DataFrame, report: pd.DataFrame | None, f
     ) or 'VALUE'
 
     if activity.empty:
+        err = st.session_state.get('market_overview_error')
+        detail = html.escape(str(err)) if err else 'IDX data is still loading or no usable Yahoo rows were returned.'
         st.markdown(
-            '<div class="market-empty-small"><b>No Yahoo breadth data loaded yet.</b><br>'
-            'Load the Quality 200 once to calculate market breadth, estimated traded value and volume activity.</div>',
+            '<div class="market-empty-small"><b>IDX breadth is not available yet.</b><br>' + detail + '</div>',
             unsafe_allow_html=True,
         )
         return
@@ -154,55 +155,95 @@ def _render_activity_card(activity: pd.DataFrame, report: pd.DataFrame | None, f
 
 
 def _tradingview_heatmap_html() -> str:
-    # TradingView documents IDX as an available EOD market. The widget keeps its own
-    # toolbar/data-source selector enabled so the user can switch datasets if needed.
-    config = r'''{
-      "exchanges": ["IDX"],
-      "dataSource": "Indonesia",
-      "grouping": "sector",
-      "blockSize": "market_cap_basic",
-      "blockColor": "change",
-      "locale": "en",
-      "symbolUrl": "https://www.tradingview.com/symbols/IDX-{symbol}/",
-      "colorTheme": "light",
-      "hasTopBar": true,
-      "isDataSetEnabled": true,
-      "isZoomEnabled": true,
-      "hasSymbolTooltip": true,
-      "isMonoSize": false,
-      "width": "100%",
-      "height": "100%"
-    }'''
-    return f'''
-<!doctype html>
+    """Return an eager-loading TradingView Indonesia stock heatmap embed."""
+    import json
+
+    config = {
+        'exchanges': [],
+        'dataSource': 'Indonesia',
+        'grouping': 'sector',
+        'blockSize': 'market_cap_basic',
+        'blockColor': 'change',
+        'locale': 'en',
+        'symbolUrl': '',
+        'colorTheme': 'light',
+        'hasTopBar': True,
+        'isDataSetEnabled': True,
+        'isZoomEnabled': True,
+        'hasSymbolTooltip': True,
+        'isMonoSize': False,
+        'width': '100%',
+        'height': '100%',
+    }
+    cfg = json.dumps(config)
+    return f"""<!doctype html>
 <html>
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <style>
-html,body{{margin:0;padding:0;background:#fff;font-family:Arial,sans-serif;overflow:hidden}}
-.wrap{{height:650px;border:0;background:#fff}}
+html,body{{margin:0;padding:0;background:#fff;font-family:Arial,sans-serif;overflow:hidden;height:100%}}
+#tv-wrap{{height:650px;position:relative;background:#fff}}
 .tradingview-widget-container,.tradingview-widget-container__widget{{height:100%;width:100%}}
-.tradingview-widget-copyright{{font-size:11px;text-align:center;color:#7b817d;padding-top:3px}}
-a{{color:#4a6154;text-decoration:none}}
+#tv-status{{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#718078;font-size:13px;background:#fff;z-index:0}}
+#tv-host{{position:relative;z-index:1;height:100%;width:100%}}
+#tv-fallback{{display:none;position:absolute;left:16px;right:16px;bottom:14px;padding:10px 12px;border:1px solid #e1e8e3;border-radius:9px;background:#f7faf8;color:#56655c;font-size:12px;z-index:3}}
+#tv-fallback a{{color:#17784a;text-decoration:none;font-weight:600}}
 </style>
 </head>
 <body>
-<div class="wrap">
-  <div class="tradingview-widget-container">
+<div id="tv-wrap">
+  <div id="tv-status">Loading Indonesia sector heatmap...</div>
+  <div id="tv-host" class="tradingview-widget-container">
     <div class="tradingview-widget-container__widget"></div>
-    <div class="tradingview-widget-copyright">
-      <a href="https://www.tradingview.com/heatmap/stock/" rel="noopener nofollow" target="_blank">Stock Heatmap</a> by TradingView
-    </div>
-    <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-stock-heatmap.js" async>
-    {config}
-    </script>
   </div>
+  <div id="tv-fallback">TradingView did not initialize automatically. <a href="https://www.tradingview.com/heatmap/stock/" target="_blank" rel="noopener">Open TradingView heatmap</a></div>
 </div>
-</body>
-</html>
-'''
+<script>
+(function() {{
+  const host = document.getElementById('tv-host');
+  const status = document.getElementById('tv-status');
+  const fallback = document.getElementById('tv-fallback');
+  const config = {cfg};
+  let attempts = 0;
 
+  function inject() {{
+    attempts += 1;
+    host.querySelectorAll('script').forEach(el => el.remove());
+    const script = document.createElement('script');
+    script.type = 'text/javascript';
+    script.src = 'https://s3.tradingview.com/external-embedding/embed-widget-stock-heatmap.js';
+    script.async = true;
+    script.textContent = JSON.stringify(config);
+    script.onerror = function() {{
+      if (attempts < 2) setTimeout(inject, 1200);
+      else fallback.style.display = 'block';
+    }};
+    host.appendChild(script);
+  }}
+
+  function check() {{
+    const frame = host.querySelector('iframe');
+    if (frame) {{
+      status.style.display = 'none';
+      fallback.style.display = 'none';
+      return;
+    }}
+    if (attempts < 2) {{
+      inject();
+      setTimeout(check, 6500);
+    }} else {{
+      status.textContent = 'Waiting for TradingView...';
+      fallback.style.display = 'block';
+    }}
+  }}
+
+  inject();
+  setTimeout(check, 6500);
+}})();
+</script>
+</body>
+</html>"""
 
 def render_market_overview(cached_yahoo, cached_scan, quality_universe) -> None:
     st.markdown(
@@ -211,9 +252,22 @@ def render_market_overview(cached_yahoo, cached_scan, quality_universe) -> None:
         unsafe_allow_html=True,
     )
 
+    # Render TradingView first. This is intentionally before any blocking Yahoo
+    # Quality-200 request so the browser starts the heatmap immediately.
+    left, right = st.columns([1.05, 2.25], gap='large')
+    with right:
+        with st.container(border=True):
+            h1, h2 = st.columns([3, 1], vertical_alignment='center')
+            with h1:
+                st.markdown('<div class="market-card-title">Sectoral Heatmap</div>', unsafe_allow_html=True)
+                st.caption('TradingView · Indonesia · size by market cap · color by 1D change · grouped by sector')
+            with h2:
+                st.markdown('<div class="market-eod-pill">IDX · EOD</div>', unsafe_allow_html=True)
+            components.html(_tradingview_heatmap_html(), height=675, scrolling=False)
+            st.caption('Heatmap starts independently before Yahoo Quality-200. TradingView lists IDX widget data as EOD.')
+
     bundle = st.session_state.get('market_overview_bundle')
     if bundle is None:
-        # Reuse a previously fetched full/large universe when possible.
         candidate = st.session_state.get('yahoo_bundle')
         if candidate is not None:
             try:
@@ -224,25 +278,24 @@ def render_market_overview(cached_yahoo, cached_scan, quality_universe) -> None:
                 pass
 
     requested_refresh = st.session_state.pop('market_overview_refresh_requested', False)
-    load_col, status_col = st.columns([1.25, 3.75], vertical_alignment='center')
-    with load_col:
-        load = st.button(
-            'Load Quality 200' if bundle is None else 'Reload Quality 200',
-            icon=':material/download:', type='primary' if bundle is None else 'secondary',
-            width='stretch', key='load_market_overview_200'
-        )
-    with status_col:
-        st.caption('Yahoo is used only for breadth/activity. TradingView supplies the sector heatmap independently.')
+    if requested_refresh:
+        st.session_state.pop('market_overview_bundle', None)
+        st.session_state.pop('market_overview_error', None)
+        try:
+            cached_yahoo.clear()
+        except Exception:
+            pass
+        bundle = None
 
-    if load or requested_refresh:
+    if bundle is None and 'market_overview_error' not in st.session_state:
         try:
             symbols = quality_universe()
-            with st.spinner(f'Loading {len(symbols)} IDX stocks from Yahoo in batches…'):
-                bundle = cached_yahoo(symbols, '1y', False, 60)
+            with left:
+                with st.spinner(f'Loading IDX market automatically · {len(symbols)} Quality 200 stocks from Yahoo...'):
+                    bundle = cached_yahoo(symbols, '1y', False, 60)
             st.session_state['market_overview_bundle'] = bundle
-            st.rerun()
         except Exception as exc:
-            st.error(f'Yahoo market breadth could not be loaded: {exc}')
+            st.session_state['market_overview_error'] = str(exc)
 
     activity = pd.DataFrame()
     report = None
@@ -254,27 +307,24 @@ def render_market_overview(cached_yahoo, cached_scan, quality_universe) -> None:
                 results = cached_scan(prices)
                 activity = _latest_activity(prices, results)
         except Exception as exc:
-            st.warning(f'Yahoo breadth data is unavailable: {exc}')
+            st.session_state['market_overview_error'] = str(exc)
 
-    left, right = st.columns([1.05, 2.25], gap='large')
     with left:
         with st.container(border=True):
             _render_activity_card(activity, report, fetched_at)
-
-    with right:
-        with st.container(border=True):
-            h1, h2 = st.columns([3, 1], vertical_alignment='center')
-            with h1:
-                st.markdown('<div class="market-card-title">Sectoral Heatmap</div>', unsafe_allow_html=True)
-                st.caption('TradingView · Indonesia/IDX · size by market cap · color by 1D change · grouped by sector')
-            with h2:
-                st.markdown('<div class="market-eod-pill">IDX · EOD</div>', unsafe_allow_html=True)
-            components.html(_tradingview_heatmap_html(), height=675, scrolling=False)
-            st.caption('TradingView lists IDX stock/widget data as end-of-day (EOD). Use the widget toolbar if you want another dataset or color metric.')
+        if st.session_state.get('market_overview_error') and activity.empty:
+            if st.button('Retry IDX data', icon=':material/refresh:', width='stretch', key='retry_market_overview_200'):
+                st.session_state.pop('market_overview_error', None)
+                st.session_state.pop('market_overview_bundle', None)
+                try:
+                    cached_yahoo.clear()
+                except Exception:
+                    pass
+                st.rerun()
 
     st.markdown(
         '<div class="market-footnote"><b>Data boundary:</b> Yahoo OHLCV cannot identify foreign vs domestic investors. '
-        'This page therefore shows Yahoo-derived market activity instead of inventing foreign-flow numbers. '
-        'A true foreign-flow module can be connected later without changing this layout.</div>',
+        'Yahoo supplies the breadth/activity panel; TradingView supplies the independent sector heatmap.</div>',
         unsafe_allow_html=True,
     )
+

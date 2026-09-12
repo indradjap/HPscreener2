@@ -1,46 +1,11 @@
-# HP Screener — Two Menu Test Build
+# HP Screener — Two Menu Auto-Heatmap Test
 
-This package is intentionally reduced to **two menus only** so navigation and market-data behavior can be tested before the rest of HP Screener is reintroduced.
+This build contains only **Dashboard** and **Market Overview**.
 
-## Menus
+## Market Overview fix
 
-1. **Dashboard**
-   - Opens by default.
-   - Fetches **BBCA.JK** automatically from Yahoo Finance.
-   - Search accepts a four-character IDX ticker with or without `.JK` (for example `ISAT` or `ISAT.JK`).
-   - 1M / 3M / 6M / 1Y chart windows.
-   - Details toggles a recent-bars table.
-   - Market button opens Market Overview.
+The TradingView heatmap is now emitted **before** the blocking Yahoo Quality-200 download, so the browser can start it as soon as Market Overview opens.
 
-2. **Market Overview**
-   - TradingView IDX sector heatmap loads independently in the right panel.
-   - Yahoo Quality 200 breadth/activity is optional and loads only when **Load Quality 200** is clicked.
-   - VALUE / VOLUME / BREADTH modes.
-   - Yahoo data is not mislabeled as foreign-flow data.
+The TradingView embed now follows the official Stock Heatmap pattern more closely: `dataSource="Indonesia"`, `exchanges=[]`, empty `symbolUrl`, plus a one-time browser retry if TradingView does not inject its iframe promptly.
 
-## Deploy to Streamlit Community Cloud
-
-Upload the **contents of this folder** to the root of one GitHub repository. The repository root must contain `app.py` directly.
-
-Use:
-
-- Branch: `main`
-- Main file path: `app.py`
-- Recommended Python: 3.12
-
-Then deploy. This build does not require secrets or API keys.
-
-## Local test
-
-```bash
-python -m pip install -r requirements.txt
-python deploy_check.py
-streamlit run app.py
-```
-
-## Notes
-
-- Yahoo Finance is an unofficial source through `yfinance`; rate limits or temporary provider failures can occur.
-- The Dashboard catches a Yahoo failure and keeps the app/navigation alive.
-- TradingView is embedded browser-side, so its widget requires normal browser internet access.
-- The Quality 200 is the bundled HP test universe, not an official IDX index.
+Yahoo Quality 200 still auto-loads and caches for 30 minutes. Yahoo failure no longer prevents the heatmap from being created.
