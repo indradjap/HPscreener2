@@ -207,7 +207,7 @@ def render_dashboard(navigate=None) -> None:
     if 'dashboard_search' not in st.session_state:
         st.session_state.dashboard_search = 'BBCA'
 
-    title_col, search_col = st.columns([4.6, 1.4], vertical_alignment='bottom')
+    title_col, search_col = st.columns([5.0, 1.2], vertical_alignment='bottom')
     with title_col:
         st.markdown(
             '<div class="dashboard-title">Dashboard</div>'
@@ -215,6 +215,7 @@ def render_dashboard(navigate=None) -> None:
             unsafe_allow_html=True,
         )
     with search_col:
+        st.markdown('<div class="dashboard-search-wrap">', unsafe_allow_html=True)
         with st.form('dashboard_search_form', border=False):
             search = st.text_input(
                 'Search stock',
@@ -223,6 +224,7 @@ def render_dashboard(navigate=None) -> None:
                 label_visibility='collapsed',
             )
             submitted = st.form_submit_button('Search', icon=':material/search:', width='stretch')
+        st.markdown('</div>', unsafe_allow_html=True)
         if submitted:
             try:
                 selected = normalize_dashboard_symbol(search)
@@ -252,7 +254,7 @@ def render_dashboard(navigate=None) -> None:
         header_left, header_right = st.columns([4.7, 1.3], vertical_alignment='center')
         with header_left:
             st.markdown(
-                f'<div class="stock-identity"><div class="stock-badge">{symbol[:2]}</div>'
+                f'<div class="stock-identity">'
                 f'<div><div class="stock-symbol">{symbol}</div>'
                 f'<div class="stock-name">{COMPANY_NAMES.get(symbol, symbol + ".JK")}</div></div></div>',
                 unsafe_allow_html=True,
