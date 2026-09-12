@@ -97,3 +97,8 @@ div[data-testid="stSelectbox"] input{font-size:13px!important;font-weight:650!im
 .flow-headline>span{white-space:nowrap}.flow-headline b{font-size:18px;margin-left:4px}.flow-net{flex-basis:100%;font-size:18px}.flow-unit{font-size:11px;font-weight:800;letter-spacing:1px;color:#6f7480;margin:2px 0 14px;line-height:1.35}
 .open-detail-link{height:100%;display:flex;align-items:center;justify-content:flex-end;color:#7a7e88;font-size:15px;font-weight:600;padding-top:2px;white-space:nowrap}.open-detail-link span{margin-left:6px}
 div[data-testid="stSelectbox"] > div[data-baseweb="select"]{min-height:44px}
+
+
+/* Dashboard indicator spacing */
+.dashboard-indicator-gap{height:18px}
+@media(max-width:800px){.dashboard-indicator-gap{height:14px}}

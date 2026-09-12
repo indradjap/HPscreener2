@@ -307,6 +307,7 @@ def render_dashboard(navigate=None) -> None:
                 unsafe_allow_html=True,
             )
 
+        st.markdown('<div class="dashboard-indicator-gap"></div>', unsafe_allow_html=True)
         indicator_options = ['MA20', 'MA50', 'MA200', 'VWAP']
         indicators = st.segmented_control(
             'Indicators',
@@ -324,8 +325,3 @@ def render_dashboard(navigate=None) -> None:
                 detail = frame.tail(15)[['date', 'open', 'high', 'low', 'close', 'volume']].copy()
                 detail.columns = ['Date', 'Open', 'High', 'Low', 'Close', 'Volume']
                 st.dataframe(detail.sort_values('Date', ascending=False), hide_index=True, width='stretch')
-
-    st.caption(
-        f'Yahoo Finance daily OHLCV · {symbol}.JK · latest bar {full.date.max():%d %b %Y} · '
-        '15-minute cache · current-session daily bar can be provisional.'
-    )
