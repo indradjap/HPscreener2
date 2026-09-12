@@ -1,42 +1,47 @@
 # HP Screener — Streamlit deployment package
 
-This package is rebuilt for Streamlit Community Cloud runtimes including Python 3.14.
+This folder is the deployable repository root. Do not rename files and do not upload duplicate `(1)` copies beside them.
 
-## Files to upload to GitHub
+## Required GitHub root
 
-Upload the contents of this folder to the repository root. `app.py`, `market.py`, `yahoo.py`, and `requirements.txt` must stay at the same level. Keep the `.streamlit` folder too.
+```
+app.py
+market.py
+yahoo.py
+yahoo_download.py
+ui.py
+style.css
+idx_quality_200.csv
+requirements.txt
+.streamlit/config.toml
+```
+
+`test_app.py`, `test_yahoo.py`, and `deploy_check.py` are optional for deployment but included for validation.
 
 ## Streamlit Community Cloud
 
-1. Push these files to a GitHub repository.
-2. In Streamlit Community Cloud, create or redeploy the app.
-3. Set the entrypoint to `app.py`.
-4. Python 3.14 is supported by this package. Python 3.12/3.13 should also work with these dependencies.
-5. Deploy.
+1. Push **the contents of this folder** to the root of one GitHub repository.
+2. Confirm the repository has exactly `app.py` (not `app(1).py`) and `requirements.txt` (not `requirements(1).txt`).
+3. Deploy with entrypoint `app.py`.
+4. Python 3.12 is the safest default. The pinned dependency set is also selected to have Python 3.14-compatible distributions as of September 2026.
+5. Do not add the older HP package files to the same root; mixed old/new `market.py` or `yahoo.py` files can cause import errors.
 
-The important dependency change from the previous package is `pandas==3.0.5`. The earlier package pinned `pandas==2.2.3`, which was a poor match for a Python 3.14 deployment environment.
-
-## Local test
+## Local validation
 
 ```bash
-python -m venv .venv
-# Windows: .venv\Scripts\activate
-# macOS/Linux: source .venv/bin/activate
-python -m pip install --upgrade pip
+python deploy_check.py
 python -m pip install -r requirements.txt
-python smoke_test.py
-python -m unittest test_app test_yahoo -v
 python -m streamlit run app.py
 ```
 
-## Current application behavior
+Optional tests:
 
-- Dashboard, Market Overview, Stock Charts, Screener, Watchlist, Research Notes, Trading Journal and Calculators are preserved.
-- Yahoo Finance remains the default live-data source.
-- Failed Yahoo downloads remain explicit and are never silently replaced by demo data.
-- The current built-in symbol list contains 18 tickers. You can enter a larger list in the sidebar (up to 250).
-- Yahoo Finance is an unofficial upstream source and can rate-limit cloud deployments. A successful app deployment does not guarantee every live Yahoo request will succeed.
+```bash
+python -m unittest test_app test_yahoo -v
+```
 
-## Deployment troubleshooting
+## Data notes
 
-If the build fails, copy the first error beginning with `ERROR`, `Traceback`, or `ModuleNotFoundError` from the Streamlit log. Dependency-install errors and Yahoo runtime errors are separate problems.
+- `Quality 200` is the bundled static 200-name selection, not an official IDX index.
+- Yahoo data is downloaded through `yfinance`; availability/rate limits depend on Yahoo and the hosting network.
+- Yahoo failures are reported rather than silently replaced with demo prices.

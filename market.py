@@ -43,7 +43,7 @@ def ema(s,n):
 def indicators(d):
     d=d.sort_values('date').copy().reset_index(drop=True)
     c=d.close
-    for n in (20,50): d[f'MA{n}']=c.rolling(n).mean(); d[f'EMA{n}']=ema(c,n)
+    for n in (20,50,200): d[f'MA{n}']=c.rolling(n).mean(); d[f'EMA{n}']=ema(c,n)
     delta=c.diff(); gain=delta.clip(lower=0); loss=-delta.clip(upper=0)
     ag=pd.Series(np.nan,index=d.index); al=ag.copy()
     if len(d)>14:
@@ -53,6 +53,10 @@ def indicators(d):
             al.iloc[i]=(al.iloc[i-1]*13+loss.iloc[i])/14
     d['RSI']=100-100/(1+ag/al.replace(0,np.nan))
     d.loc[(al==0)&(ag>0),'RSI']=100; d.loc[(al==0)&(ag==0),'RSI']=50
+    rlow=d.RSI.rolling(14).min(); rhigh=d.RSI.rolling(14).max()
+    stoch=(d.RSI-rlow)/(rhigh-rlow).replace(0,np.nan)*100
+    d['StochK']=stoch.rolling(3).mean(); d['StochD']=d.StochK.rolling(3).mean()
+    d['AvgValue20B']=(c*d.volume).rolling(20).mean()/1e9
     d['MACD']=ema(c,12)-ema(c,26)
     signal=ema(d.MACD.dropna().reset_index(drop=True),9)
     d['Signal']=np.nan
@@ -71,7 +75,7 @@ def scan(prices):
     for s,g in prices.groupby('symbol'):
         d=indicators(g); x=d.iloc[-1]; prev=d.iloc[-2]
         checks=[x.close>x.MA20,x.MA20>x.MA50,x.RSI>=50,x.Histogram>0,x.RelVolume>=1.5,x.CMF>0]
-        rows.append(dict(Symbol=s,Date=x.date.date().isoformat(),Close=x.close,ChangePct=x.ChangePct,RSI=x.RSI,RelVolume=x.RelVolume,CMF=x.CMF,Score=round(sum(checks)/6*100),Trend=bool(x.close>x.MA20>x.MA50),Breakout=bool(x.close>x.PriorHigh),GoldenCross=bool(x.EMA20>x.EMA50 and prev.EMA20<=prev.EMA50),MACDPositive=bool(x.Histogram>0)))
+        rows.append(dict(Symbol=s,Date=x.date.date().isoformat(),Close=x.close,AvgValue20B=x.AvgValue20B,StochK=x.StochK,StochD=x.StochD,StochCross=bool(x.StochK>x.StochD and prev.StochK<=prev.StochD),AboveMA200=bool(x.close>x.MA200),ChangePct=x.ChangePct,RSI=x.RSI,RelVolume=x.RelVolume,CMF=x.CMF,Score=round(sum(checks)/6*100),Trend=bool(x.close>x.MA20>x.MA50),Breakout=bool(x.close>x.PriorHigh),GoldenCross=bool(x.EMA20>x.EMA50 and prev.EMA20<=prev.EMA50),MACDPositive=bool(x.Histogram>0)))
     return pd.DataFrame(rows).sort_values('Score',ascending=False).reset_index(drop=True)
 
 def position_size(capital,risk_pct,entry,stop):
