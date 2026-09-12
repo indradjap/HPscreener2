@@ -93,3 +93,13 @@ the next trading day when the closing price moves into another price group.
 For next-session swing plans, the latest close is used as the fraction reference.
 Entry-zone lows and stops round down; entry-zone highs, breakout triggers and
 targets round up to valid executable prices.
+
+## Stock Analysis data-label / Foreign 20D update
+
+- The green delta below Price is explicitly labeled `20D Return`.
+- `Foreign 20D` is available even when a ticker is entered directly in Stock Analysis.
+  The page caches the latest 20 IDX trading sessions and calculates the same foreign
+  intensity used by Smart Money Screener:
+  `sum(ForeignBuy - ForeignSell) / sum(abs(ForeignBuy) + abs(ForeignSell)) * 100`.
+- If IDX history is temporarily unavailable, Stock Analysis remains usable and the
+  Foreign 20D field shows a dash rather than failing the whole page.

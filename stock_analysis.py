@@ -8,7 +8,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-from idx_official import fetch_stock_screener_metadata
+from idx_official import fetch_stock_screener_metadata, fetch_idx_market_history
 from idx_price import idx_price_fraction, round_idx_price
 from stock_pick import (
     _benchmark_returns,
@@ -51,9 +51,56 @@ def _idx_company_metadata() -> pd.DataFrame:
         return pd.DataFrame(columns=['Symbol', 'Company', 'Sector', 'SubSector'])
 
 
+@st.cache_data(ttl=1800, show_spinner=False)
+def _idx_foreign_history_20d() -> pd.DataFrame:
+    """Cache the latest 20 IDX trading sessions once for all manual stock searches."""
+    try:
+        return fetch_idx_market_history(sessions=20, max_calendar_days=45)
+    except Exception:
+        return pd.DataFrame()
+
+
+def _foreign_20d_context(symbol: str) -> dict:
+    """Return the same 20D foreign-intensity definition used by Smart Money Screener."""
+    hist = _idx_foreign_history_20d()
+    if hist.empty:
+        return {
+            'ForeignIntensity20': np.nan,
+            'ForeignPositiveDays20': 0,
+            'IDXDate': 'latest',
+        }
+
+    g = hist[hist.Symbol.astype(str).str.upper() == symbol].copy()
+    if g.empty:
+        return {
+            'ForeignIntensity20': np.nan,
+            'ForeignPositiveDays20': 0,
+            'IDXDate': 'latest',
+        }
+
+    g = g.sort_values('SessionDate').tail(20)
+    buy = pd.to_numeric(g['ForeignBuy'], errors='coerce').fillna(0.0)
+    sell = pd.to_numeric(g['ForeignSell'], errors='coerce').fillna(0.0)
+    net = buy - sell
+    gross = buy.abs() + sell.abs()
+    gross_sum = float(gross.sum())
+    intensity = float(net.sum() / gross_sum * 100.0) if gross_sum > 0 else np.nan
+
+    dates = pd.to_datetime(g['SessionDate'], errors='coerce').dropna()
+    idx_date = dates.max().date().isoformat() if not dates.empty else 'latest'
+    return {
+        'ForeignIntensity20': intensity,
+        'ForeignPositiveDays20': int((net > 0).sum()),
+        'IDXDate': idx_date,
+    }
+
+
 def _company_context(symbol: str, prefill: dict | None = None) -> dict:
-    # When opened from Stock Pick, reuse its already-computed IDX context so this
-    # single-stock page stays fast and the score remains consistent.
+    # When opened from Stock Pick, reuse its already-computed IDX foreign context
+    # if available. Manual searches always obtain the same metric from cached IDX
+    # 20-session stock summaries.
+    foreign_ctx = _foreign_20d_context(symbol)
+
     if prefill and str(prefill.get('Symbol', '')).upper() == symbol:
         foreign = pd.to_numeric(prefill.get('ForeignIntensity20'), errors='coerce')
         positive_days = pd.to_numeric(prefill.get('ForeignPositiveDays20'), errors='coerce')
@@ -61,9 +108,19 @@ def _company_context(symbol: str, prefill: dict | None = None) -> dict:
             'Company': str(prefill.get('Company') or symbol),
             'Sector': str(prefill.get('Sector') or 'IDX'),
             'SubSector': str(prefill.get('SubSector') or ''),
-            'ForeignIntensity20': float(foreign) if pd.notna(foreign) else np.nan,
-            'ForeignPositiveDays20': int(positive_days) if pd.notna(positive_days) else 0,
-            'IDXDate': str(prefill.get('IDXDate') or 'latest'),
+            'ForeignIntensity20': (
+                float(foreign) if pd.notna(foreign)
+                else foreign_ctx['ForeignIntensity20']
+            ),
+            'ForeignPositiveDays20': (
+                int(positive_days) if pd.notna(positive_days)
+                else foreign_ctx['ForeignPositiveDays20']
+            ),
+            'IDXDate': str(
+                prefill.get('IDXDate')
+                or foreign_ctx.get('IDXDate')
+                or 'latest'
+            ),
         }
 
     meta = _idx_company_metadata()
@@ -74,17 +131,18 @@ def _company_context(symbol: str, prefill: dict | None = None) -> dict:
             'Company': str(r.get('Company') or symbol),
             'Sector': str(r.get('Sector') or 'IDX'),
             'SubSector': str(r.get('SubSector') or ''),
-            'ForeignIntensity20': np.nan,
-            'ForeignPositiveDays20': 0,
-            'IDXDate': 'latest',
+            'ForeignIntensity20': foreign_ctx['ForeignIntensity20'],
+            'ForeignPositiveDays20': foreign_ctx['ForeignPositiveDays20'],
+            'IDXDate': foreign_ctx['IDXDate'],
         }
+
     return {
         'Company': symbol,
         'Sector': 'IDX',
         'SubSector': '',
-        'ForeignIntensity20': np.nan,
-        'ForeignPositiveDays20': 0,
-        'IDXDate': 'latest',
+        'ForeignIntensity20': foreign_ctx['ForeignIntensity20'],
+        'ForeignPositiveDays20': foreign_ctx['ForeignPositiveDays20'],
+        'IDXDate': foreign_ctx['IDXDate'],
     }
 
 
@@ -404,7 +462,7 @@ def render_stock_analysis(navigate=None) -> None:
         )
 
         m = st.columns(6)
-        m[0].metric('Price', _fmt_price(r.Close), _fmt_pct(r.Return20))
+        m[0].metric('Price', _fmt_price(r.Close), f'20D Return {_fmt_pct(r.Return20)}')
         m[1].metric('RSI 14', f'{r.RSI:.0f}')
         m[2].metric('ADX 14', f'{r.ADX:.0f}')
         m[3].metric('Rel Volume', f'{r.RelVolume:.2f}×')
