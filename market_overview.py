@@ -32,19 +32,16 @@ def _flow_format(value: float, mode: str) -> str:
 
 
 def _flow_figure(metric: dict[str, float], mode: str) -> go.Figure:
-    """Two columns (Foreign/Domestic), with Sell base + Buy overlay feel."""
-    f_buy, f_sell = metric["foreign_buy"], metric["foreign_sell"]
-    d_buy, d_sell = metric["domestic_buy"], metric["domestic_sell"]
+    """Two stacked columns (Foreign/Domestic) with buy on top and sell at the base."""
+    f_buy, f_sell = float(metric["foreign_buy"]), float(metric["foreign_sell"])
+    d_buy, d_sell = float(metric["domestic_buy"]), float(metric["domestic_sell"])
     fig = go.Figure()
     fig.add_trace(
         go.Bar(
             x=["Foreign", "Domestic"],
             y=[f_sell, d_sell],
             name="Sell",
-            marker_color=["#3f968c", "#453cc9"],
-            text=[f"F Sell<br><b>{_flow_format(f_sell, mode)}</b>", f"D Sell<br><b>{_flow_format(d_sell, mode)}</b>"],
-            textposition="inside",
-            insidetextanchor="start",
+            marker_color=["#4b9a92", "#463cc6"],
             hovertemplate="%{x} Sell<br>%{y:,.0f}<extra></extra>",
         )
     )
@@ -53,36 +50,45 @@ def _flow_figure(metric: dict[str, float], mode: str) -> go.Figure:
             x=["Foreign", "Domestic"],
             y=[f_buy, d_buy],
             name="Buy",
-            marker_color=["#5bc8bc", "#7c83e8"],
-            text=[f"F Buy<br><b>{_flow_format(f_buy, mode)}</b>", f"D Buy<br><b>{_flow_format(d_buy, mode)}</b>"],
-            textposition="outside",
-            cliponaxis=False,
+            marker_color=["#68c6ba", "#7a81e8"],
             hovertemplate="%{x} Buy<br>%{y:,.0f}<extra></extra>",
         )
     )
+
+    ymax = max(f_buy + f_sell, d_buy + d_sell) if max(f_buy + f_sell, d_buy + d_sell) > 0 else 1.0
+    pad = ymax * 0.16
     fig.update_layout(
-        barmode="overlay",
-        height=420,
-        margin=dict(l=5, r=5, t=52, b=15),
-        bargap=.48,
+        barmode="stack",
+        height=500,
+        margin=dict(l=8, r=8, t=18, b=28),
+        bargap=.52,
         template="plotly_white",
         showlegend=False,
         paper_bgcolor="white",
         plot_bgcolor="white",
+        font=dict(size=12, color="#1e2521"),
     )
-    fig.update_xaxes(showgrid=False, zeroline=False, tickfont=dict(size=12))
-    fig.update_yaxes(showticklabels=False, gridcolor="#edf0ee", zeroline=False, title=None)
+    fig.update_xaxes(showgrid=False, zeroline=False, tickfont=dict(size=12), fixedrange=True)
+    fig.update_yaxes(showticklabels=False, gridcolor="#edf0ee", griddash="dot", zeroline=False, title=None, range=[0, ymax + pad], fixedrange=True)
+
+    ann = [
+        dict(x="Foreign", y=f_sell + f_buy*0.92, text=f"<span style='color:#3b9a8f'><b>F Buy</b></span><br><b>{_flow_format(f_buy, mode)}</b>", showarrow=False, xanchor="center", yanchor="bottom", font=dict(size=12, color="#1f2521")),
+        dict(x="Foreign", y=max(f_sell*0.03, ymax*0.015), text=f"<span style='color:#2f7a74'><b>F Sell</b></span><br><b>{_flow_format(f_sell, mode)}</b>", showarrow=False, xanchor="center", yanchor="bottom", font=dict(size=12, color="#1f2521")),
+        dict(x="Domestic", y=d_sell + d_buy*0.92, text=f"<span style='color:#4b43e3'><b>D Buy</b></span><br><b>{_flow_format(d_buy, mode)}</b>", showarrow=False, xanchor="center", yanchor="bottom", font=dict(size=12, color="#1f2521")),
+        dict(x="Domestic", y=max(d_sell*0.03, ymax*0.015), text=f"<span style='color:#3d36c4'><b>D Sell</b></span><br><b>{_flow_format(d_sell, mode)}</b>", showarrow=False, xanchor="center", yanchor="bottom", font=dict(size=12, color="#1f2521")),
+    ]
+    fig.update_layout(annotations=ann)
     return fig
 
 
 def _render_flow_card(flow: dict | None, error: str | None, clear_flow_cache) -> None:
-    h1, h2 = st.columns([4.4, .6], vertical_alignment="center")
-    with h1:
+    top1, top2, top3 = st.columns([3.5, 1.15, 1.3], vertical_alignment="center")
+    with top1:
         st.markdown('<div class="market-card-title">Foreign vs Domestic<br>Net Flow</div>', unsafe_allow_html=True)
-    with h2:
-        if st.button("", icon=":material/refresh:", help="Refresh", key="refresh_idx_flow", width="stretch"):
-            clear_flow_cache()
-            st.rerun()
+    with top2:
+        st.selectbox('Investor filter', ['All'], key='idx_flow_filter', label_visibility='collapsed')
+    with top3:
+        st.markdown('<div class="open-detail-link">Open detail <span>→</span></div>', unsafe_allow_html=True)
 
     mode = st.segmented_control(
         "Flow metric", ["VALUE", "VOLUME", "FREQUENCY"], default="VALUE",

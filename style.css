@@ -90,3 +90,10 @@ div[data-testid="stSelectbox"] input{font-size:13px!important;font-weight:650!im
 [data-testid="stSidebar"] button[kind="primary"]{background:#e5f0e7;color:#24583a;border:1px solid #d2e2d7;box-shadow:none}
 [data-testid="stSidebar"] button[kind="tertiary"]{background:transparent;color:#233030;border:1px solid transparent}
 [data-testid="stSidebar"] button[kind="tertiary"]:hover{background:#f2f7f4;border-color:#edf2ef}
+
+
+/* Foreign vs Domestic Net Flow refinement */
+.flow-headline{border:1px solid #e5e9e7;border-radius:16px;padding:18px 18px 14px;margin:12px 0 16px;background:#fff;display:flex;gap:8px 18px;flex-wrap:wrap;font-size:18px;color:#6f7480;line-height:1.25}
+.flow-headline>span{white-space:nowrap}.flow-headline b{font-size:18px;margin-left:4px}.flow-net{flex-basis:100%;font-size:18px}.flow-unit{font-size:11px;font-weight:800;letter-spacing:1px;color:#6f7480;margin:2px 0 14px;line-height:1.35}
+.open-detail-link{height:100%;display:flex;align-items:center;justify-content:flex-end;color:#7a7e88;font-size:15px;font-weight:600;padding-top:2px;white-space:nowrap}.open-detail-link span{margin-left:6px}
+div[data-testid="stSelectbox"] > div[data-baseweb="select"]{min-height:44px}
