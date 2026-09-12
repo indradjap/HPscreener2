@@ -171,3 +171,14 @@ Stock Analysis now uses the same swing risk framework as Stock Pick:
 The R-multiple ladder remains the mechanical profit-taking framework. Structure RR
 is a sanity check: if nearby resistance is below about 1.5R, the setup is flagged as
 structurally tight even if mathematical TP2/TP3 levels are farther away.
+
+
+## Runtime cache-schema fix
+
+Streamlit Cloud may retain a previously cached Stock Pick DataFrame after new
+computed columns are introduced. Stock Pick now includes an explicit schema
+version in its cache key and a backward-compatible schema normalizer.
+
+If a legacy cached frame lacks `Target3` or `SupportTarget3`, those fields are
+reconstructed using the current 4R convention before rendering. The UI also uses
+safe Series access so a stale cache cannot crash the page with AttributeError.

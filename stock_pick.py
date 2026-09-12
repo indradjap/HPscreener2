@@ -795,9 +795,64 @@ def _build_dataset(universe: str, min_value_b: float) -> tuple[pd.DataFrame, dic
     return out.reset_index(drop=True), status
 
 
+STOCK_PICK_SCHEMA_VERSION = '2026-09-12-rtarget-v2'
+
+
 @st.cache_data(ttl=1800, show_spinner=False)
-def cached_stock_pick_dataset(universe: str, min_value_b: float) -> tuple[pd.DataFrame, dict]:
+def cached_stock_pick_dataset(
+    universe: str,
+    min_value_b: float,
+    schema_version: str,
+) -> tuple[pd.DataFrame, dict]:
+    # schema_version is intentionally part of the cache key. When Stock Pick
+    # adds/removes computed columns, bumping this value forces Streamlit Cloud
+    # to rebuild the DataFrame instead of returning an older cached schema.
     return _build_dataset(universe, min_value_b)
+
+
+def _ensure_stock_pick_schema(data: pd.DataFrame) -> pd.DataFrame:
+    """Make cached/legacy Stock Pick frames safe for the current renderer."""
+    if data is None or data.empty:
+        return data
+
+    out = data.copy()
+
+    # Generic TP3 = 4R using the same plan convention as the new build.
+    if 'Target3' not in out.columns:
+        close = pd.to_numeric(out.get('Close'), errors='coerce')
+        stop = pd.to_numeric(out.get('Stop'), errors='coerce')
+        risk = (close - stop).clip(lower=0)
+        raw_t3 = close + 4.0 * risk
+        vals = []
+        for c, t in zip(close, raw_t3):
+            if pd.isna(c) or pd.isna(t):
+                vals.append(np.nan)
+            else:
+                vals.append(round_idx_price(float(t), float(c), 'ceil'))
+        out['Target3'] = vals
+
+    # Support TP3 = 4R from support entry midpoint to support stop.
+    if 'SupportTarget3' not in out.columns:
+        needed = {'Close', 'SupportEntryLow', 'SupportEntryHigh', 'SupportStop'}
+        if needed.issubset(out.columns):
+            close = pd.to_numeric(out['Close'], errors='coerce')
+            entry_low = pd.to_numeric(out['SupportEntryLow'], errors='coerce')
+            entry_high = pd.to_numeric(out['SupportEntryHigh'], errors='coerce')
+            stop = pd.to_numeric(out['SupportStop'], errors='coerce')
+            mid = (entry_low + entry_high) / 2.0
+            risk = (mid - stop).clip(lower=0)
+            raw_t3 = mid + 4.0 * risk
+            vals = []
+            for c, t in zip(close, raw_t3):
+                if pd.isna(c) or pd.isna(t):
+                    vals.append(np.nan)
+                else:
+                    vals.append(round_idx_price(float(t), float(c), 'ceil'))
+            out['SupportTarget3'] = vals
+        else:
+            out['SupportTarget3'] = np.nan
+
+    return out
 
 
 def render_stock_pick(navigate=None) -> None:
@@ -831,7 +886,12 @@ def render_stock_pick(navigate=None) -> None:
 
     with st.spinner('Loading stock picks... please wait'):
         try:
-            data, status = cached_stock_pick_dataset(universe, float(min_value))
+            data, status = cached_stock_pick_dataset(
+                universe,
+                float(min_value),
+                STOCK_PICK_SCHEMA_VERSION,
+            )
+            data = _ensure_stock_pick_schema(data)
         except Exception as exc:
             st.error(f'Stock Pick data could not be built: {exc}')
             return
@@ -917,7 +977,7 @@ def render_stock_pick(navigate=None) -> None:
                 f'<div class="sp-risk"><b>Support</b> {_fmt_price(r.SupportLevel)} ({html.escape(str(r.SupportType))})<br>'
                 f'<b>Entry</b> {_fmt_price(r.SupportEntryLow)}–{_fmt_price(r.SupportEntryHigh)}<br>'
                 f'<b>Stop</b> {_fmt_price(r.SupportStop)}<br>'
-                f'<b>T1/T2/T3</b> {_fmt_price(r.SupportTarget1)} / {_fmt_price(r.SupportTarget2)} / {_fmt_price(r.SupportTarget3)}<br>'
+                f'<b>T1/T2/T3</b> {_fmt_price(r.get("SupportTarget1", np.nan))} / {_fmt_price(r.get("SupportTarget2", np.nan))} / {_fmt_price(r.get("SupportTarget3", np.nan))}<br>'
                 f'<b>Structure RR</b> {"—" if pd.isna(r.SupportRR) else f"{r.SupportRR:.1f}x"}</div>'
             )
             why_text = _support_why(r)
@@ -930,7 +990,7 @@ def render_stock_pick(navigate=None) -> None:
             risk_html = (
                 f'<div class="sp-risk"><b>Entry</b> {_fmt_price(r.EntryLow)}–{_fmt_price(r.EntryHigh)}<br>'
                 f'<b>Stop</b> {_fmt_price(r.Stop)} ({_fmt_pct(-r.StopPct)})<br>'
-                f'<b>T1/T2/T3</b> {_fmt_price(r.Target1)} / {_fmt_price(r.Target2)} / {_fmt_price(r.Target3)}</div>'
+                f'<b>T1/T2/T3</b> {_fmt_price(r.get("Target1", np.nan))} / {_fmt_price(r.get("Target2", np.nan))} / {_fmt_price(r.get("Target3", np.nan))}</div>'
             )
             why_text = str(r.Why)
 
