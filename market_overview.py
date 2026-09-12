@@ -76,11 +76,11 @@ def _flow_figure(metric: dict[str, float], mode: str) -> go.Figure:
 
 
 def _render_flow_card(flow: dict | None, error: str | None, clear_flow_cache) -> None:
-    h1, h2 = st.columns([3.1, .9], vertical_alignment="center")
+    h1, h2 = st.columns([4.4, .6], vertical_alignment="center")
     with h1:
         st.markdown('<div class="market-card-title">Foreign vs Domestic<br>Net Flow</div>', unsafe_allow_html=True)
     with h2:
-        if st.button("Refresh", icon=":material/refresh:", key="refresh_idx_flow", width="stretch"):
+        if st.button("", icon=":material/refresh:", help="Refresh", key="refresh_idx_flow", width="stretch"):
             clear_flow_cache()
             st.rerun()
 
@@ -247,11 +247,11 @@ def _legend_html() -> str:
 
 
 def _render_heatmap_card(heatmap: pd.DataFrame | None, note: str | None, error: str | None, clear_market_cache) -> None:
-    top1, top2 = st.columns([4.3, .7], vertical_alignment='center')
+    top1, top2 = st.columns([5.1, .4], vertical_alignment='center')
     with top1:
         st.markdown('<div class="market-card-title heat-title">Sectoral Heatmap</div>', unsafe_allow_html=True)
     with top2:
-        if st.button('Refresh', icon=':material/refresh:', key='refresh_idx_heatmap', width='stretch'):
+        if st.button('', icon=':material/refresh:', help='Refresh', key='refresh_idx_heatmap', width='stretch'):
             clear_market_cache()
             st.rerun()
 
@@ -312,6 +312,92 @@ def _render_heatmap_card(heatmap: pd.DataFrame | None, note: str | None, error: 
         f'{html.escape(source)}</div>', unsafe_allow_html=True
     )
 
+
+
+def _mover_metric_label(mode: str) -> str:
+    return {
+        'Top Gainer': '% Chg',
+        'Top Loser': '% Chg',
+        'Top Value': 'Value',
+        'Top Volume': 'Volume',
+        'Top Frequency': 'Frequency',
+    }[mode]
+
+
+def _mover_metric_value(row: pd.Series, mode: str) -> tuple[str, str]:
+    if mode in ('Top Gainer', 'Top Loser'):
+        v = float(row.get('ChangePct', 0.0) or 0.0)
+        cls = 'positive' if v > 0 else ('negative' if v < 0 else '')
+        return f'{v:+.2f}%', cls
+    if mode == 'Top Value':
+        return _fmt_large(float(row.get('TradedValue', 0.0) or 0.0), currency=True), ''
+    if mode == 'Top Volume':
+        return _fmt_large(float(row.get('Volume', 0.0) or 0.0)), ''
+    return f"{float(row.get('Frequency', 0.0) or 0.0):,.0f}", ''
+
+
+def _render_top_movers(market: pd.DataFrame | None, error: str | None = None) -> None:
+    st.markdown('<div class="movers-title">Top Movers</div>', unsafe_allow_html=True)
+    if market is None or market.empty:
+        detail = html.escape(error or 'Waiting for latest IDX market summary.')
+        st.markdown(
+            '<div class="market-empty-small"><b>Top Movers unavailable.</b><br>' + detail + '</div>',
+            unsafe_allow_html=True,
+        )
+        return
+
+    mode = st.segmented_control(
+        'Mover ranking',
+        ['Top Gainer', 'Top Loser', 'Top Value', 'Top Volume', 'Top Frequency'],
+        default='Top Gainer', key='top_movers_mode', label_visibility='collapsed'
+    ) or 'Top Gainer'
+
+    d = market.copy()
+    numeric_cols = ['Close','ChangePct','TradedValue','Volume','Frequency']
+    for c in numeric_cols:
+        if c in d.columns:
+            d[c] = pd.to_numeric(d[c], errors='coerce')
+    d = d[d.Close.fillna(0) > 0].copy()
+
+    if mode == 'Top Gainer':
+        d = d.sort_values(['ChangePct','TradedValue'], ascending=[False, False])
+    elif mode == 'Top Loser':
+        d = d.sort_values(['ChangePct','TradedValue'], ascending=[True, False])
+    elif mode == 'Top Value':
+        d = d.sort_values(['TradedValue','ChangePct'], ascending=[False, False])
+    elif mode == 'Top Volume':
+        d = d.sort_values(['Volume','ChangePct'], ascending=[False, False])
+    else:
+        d = d.sort_values(['Frequency','ChangePct'], ascending=[False, False])
+    d = d.head(5)
+
+    metric_label = _mover_metric_label(mode)
+    rows=[]
+    for _, row in d.iterrows():
+        symbol = html.escape(str(row.get('Symbol','')))
+        close = float(row.get('Close',0.0) or 0.0)
+        value, cls = _mover_metric_value(row, mode)
+        change = float(row.get('ChangePct',0.0) or 0.0)
+        secondary = '' if mode in ('Top Gainer','Top Loser') else f'<span class="mover-subchg {"positive" if change>0 else "negative" if change<0 else ""}">{change:+.2f}%</span>'
+        rows.append(
+            '<div class="mover-row">'
+            f'<div class="mover-symbol"><span>{symbol}</span></div>'
+            f'<div class="mover-close">{close:,.0f}</div>'
+            f'<div class="mover-metric {cls}">{html.escape(value)}{secondary}</div>'
+            '</div>'
+        )
+    st.markdown(
+        '<div class="mover-table">'
+        '<div class="mover-header"><div>Ticker</div><div>Close</div>'
+        f'<div>{html.escape(metric_label)}</div></div>'
+        + ''.join(rows) + '</div>', unsafe_allow_html=True
+    )
+
+    date_val = pd.to_datetime(market.get('Date'), errors='coerce').max() if 'Date' in market else pd.NaT
+    date_label = date_val.date().isoformat() if pd.notna(date_val) else 'latest'
+    st.markdown(f'<div class="mover-source">Official IDX · trading date {html.escape(date_label)}</div>', unsafe_allow_html=True)
+
+
 def render_market_overview(cached_idx_flow, cached_idx_heatmap) -> None:
     st.markdown(
         '<div class="market-title">Market Overview</div>'
@@ -356,9 +442,6 @@ def render_market_overview(cached_idx_flow, cached_idx_heatmap) -> None:
         with st.container(border=True):
             _render_heatmap_card(heatmap, heatmap_note, heatmap_error, clear_market)
 
-    st.markdown(
-        '<div class="market-footnote"><b>Source boundary:</b> Market Overview now uses IDX data for investor-flow '
-        'and IDX market/sector metadata. TradingView has been removed from this page, so it cannot fall back to '
-        'S&amp;P 500. Dashboard remains Yahoo-based for single-stock charting.</div>',
-        unsafe_allow_html=True,
-    )
+    with st.container(border=True):
+        _render_top_movers(heatmap, heatmap_error)
+

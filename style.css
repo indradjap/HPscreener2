@@ -69,3 +69,14 @@ div[data-testid="stSelectbox"] input{font-size:13px!important;font-weight:650!im
 .heat-legend-block{height:13px;border-radius:2px}
 .heat-source{font-size:11px;color:#7a847e;padding:2px 12px 4px;text-align:right}
 @media(max-width:800px){.heat-title{font-size:19px!important}.heat-legend-label{font-size:9px}.heat-legend-block{height:10px}}
+
+
+/* Top Movers — official IDX daily stock summary */
+.movers-title{font-size:22px;font-weight:720;letter-spacing:-.45px;color:#17281f;margin:5px 0 14px}
+.mover-table{width:100%;margin-top:10px}
+.mover-header,.mover-row{display:grid;grid-template-columns:minmax(220px,1.7fr) minmax(120px,.7fr) minmax(160px,.9fr);align-items:center;column-gap:18px}
+.mover-header{padding:10px 8px 9px;border-bottom:1px solid #e2e6e4;color:#727a76;font-size:13px;font-weight:700}
+.mover-header>div:nth-child(2),.mover-header>div:nth-child(3){text-align:right}
+.mover-row{min-height:58px;padding:7px 8px;border-bottom:1px solid #e6eae8}
+.mover-row:last-child{border-bottom:0}.mover-symbol{font-size:16px;font-weight:760;color:#131915;letter-spacing:.1px}.mover-symbol span{display:inline-block;min-width:62px}.mover-close{text-align:right;font-size:16px;color:#1d2520;font-variant-numeric:tabular-nums}.mover-metric{text-align:right;font-size:16px;font-weight:720;color:#29332d;font-variant-numeric:tabular-nums}.mover-subchg{display:block;font-size:11px;font-weight:650;margin-top:3px}.mover-source{font-size:11px;color:#7a847e;text-align:right;padding:9px 8px 2px}
+@media(max-width:800px){.movers-title{font-size:19px}.mover-header,.mover-row{grid-template-columns:1fr .7fr .85fr;column-gap:8px}.mover-header{font-size:11px}.mover-row{min-height:52px}.mover-symbol,.mover-close,.mover-metric{font-size:13px}}

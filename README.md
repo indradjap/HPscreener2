@@ -27,3 +27,7 @@ Removed the Plotly treemap depth cap that hid stock-level tiles. The tree is IDX
 ## Sidebar refinement v4
 
 Removed the `WORKSPACE` navigation group label. Dashboard and Market Overview now appear directly under the HP Screener branding with no menu grouping.
+
+
+## Top Movers addition
+Market Overview now adds a native Top Movers card below investor flow and the heatmap. It uses the same official IDX daily stock summary already loaded by the heatmap; no new provider is required. Tabs: Top Gainer, Top Loser, Top Value, Top Volume, Top Frequency.
