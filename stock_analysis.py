@@ -395,6 +395,15 @@ def _metric_chip(text: str, kind: str = '') -> str:
     return f'<span class="sa-chip{suffix}">{html.escape(str(text))}</span>'
 
 
+def _small_metric_card(label: str, value: str, tone: str = 'neutral') -> str:
+    return (
+        f'<div class="sa-metric-card">'
+        f'<span class="sa-metric-label">{html.escape(str(label))}</span>'
+        f'<b class="sa-metric-value {tone}">{html.escape(str(value))}</b>'
+        f'</div>'
+    )
+
+
 def render_stock_analysis(navigate=None) -> None:
     if 'analysis_symbol' not in st.session_state:
         st.session_state.analysis_symbol = st.session_state.get('dashboard_symbol', 'BBCA')
@@ -440,43 +449,55 @@ def render_stock_analysis(navigate=None) -> None:
 
     grade, grade_kind = _grade(r.StockPickScore)
     with st.container(border=True):
-        left, middle, right = st.columns([2.4, 2.5, 1.3], vertical_alignment='center')
-        left.markdown(
-            f'<div class="sa-identity"><b>{html.escape(symbol)}</b>'
-            f'<span>{html.escape(str(r.Company))}</span>'
-            f'<small>{html.escape(str(r.Sector))}</small></div>',
-            unsafe_allow_html=True,
-        )
-        middle.markdown(
-            '<div class="sa-chip-row">'
-            + _metric_chip(str(r.Setup), 'good' if r.StockPickScore >= 70 else 'neutral')
-            + _metric_chip(f'RS20 {_fmt_pct(r.RS20)}', 'good' if r.RS20 > 0 else 'bad')
-            + _metric_chip(f'RS60 {_fmt_pct(r.RS60)}', 'good' if r.RS60 > 0 else 'bad')
-            + _metric_chip(f'ATR {r.ATRPct:.1f}%', 'neutral')
-            + '</div>',
-            unsafe_allow_html=True,
-        )
-        right.markdown(
-            f'<div class="sa-score sa-score-{grade_kind}">{int(r.StockPickScore)}<span>{grade}</span></div>',
-            unsafe_allow_html=True,
-        )
+        st.markdown('<div class="sa-panel-gap-top"></div>', unsafe_allow_html=True)
+        _pad_l, main, _pad_r = st.columns([0.03, 0.94, 0.03])
+        with main:
+            left, middle, right = st.columns([2.4, 2.5, 1.3], vertical_alignment='center')
+            left.markdown(
+                f'<div class="sa-identity"><b>{html.escape(symbol)}</b>'
+                f'<span>{html.escape(str(r.Company))}</span>'
+                f'<small>{html.escape(str(r.Sector))}</small></div>',
+                unsafe_allow_html=True,
+            )
+            middle.markdown(
+                '<div class="sa-chip-row">'
+                + _metric_chip(str(r.Setup), 'good' if r.StockPickScore >= 70 else 'neutral')
+                + _metric_chip(f'RS20 {_fmt_pct(r.RS20)}', 'good' if r.RS20 > 0 else 'bad')
+                + _metric_chip(f'RS60 {_fmt_pct(r.RS60)}', 'good' if r.RS60 > 0 else 'bad')
+                + _metric_chip(f'ATR {r.ATRPct:.1f}%', 'neutral')
+                + '</div>',
+                unsafe_allow_html=True,
+            )
+            right.markdown(
+                f'<div class="sa-score sa-score-{grade_kind}">{int(r.StockPickScore)}<span>{grade}</span></div>',
+                unsafe_allow_html=True,
+            )
 
-        m = st.columns(6)
-        return_class = 'positive' if r.Return20 >= 0 else 'negative'
-        m[0].markdown(
-            f'<div class="sa-price-card">'
-            f'<span class="sa-price-label">Price</span>'
-            f'<b class="sa-price-value">{_fmt_price(r.Close)}</b>'
-            f'<div class="sa-return-row"><span>20D Return</span>'
-            f'<strong class="{return_class}">{_fmt_pct(r.Return20)}</strong></div>'
-            f'</div>',
-            unsafe_allow_html=True,
-        )
-        m[1].metric('RSI 14', f'{r.RSI:.0f}')
-        m[2].metric('ADX 14', f'{r.ADX:.0f}')
-        m[3].metric('Rel Volume', f'{r.RelVolume:.2f}×')
-        m[4].metric('CMF20', f'{r.CMF20:+.2f}')
-        m[5].metric('Foreign 20D', f'{r.ForeignIntensity20:+.1f}%' if bool(r.ForeignAvailable) else '—')
+            m = st.columns(6)
+            return_class = 'positive' if r.Return20 >= 0 else 'negative'
+            cmf_class = 'positive' if r.CMF20 > 0 else ('negative' if r.CMF20 < 0 else 'neutral')
+            foreign_value = f'{r.ForeignIntensity20:+.1f}%' if bool(r.ForeignAvailable) else '—'
+            foreign_class = (
+                'positive' if bool(r.ForeignAvailable) and r.ForeignIntensity20 > 0
+                else 'negative' if bool(r.ForeignAvailable) and r.ForeignIntensity20 < 0
+                else 'neutral'
+            )
+
+            m[0].markdown(
+                f'<div class="sa-price-card">'
+                f'<span class="sa-price-label">Price</span>'
+                f'<b class="sa-price-value">{_fmt_price(r.Close)}</b>'
+                f'<div class="sa-return-row"><span>20D Return</span>'
+                f'<strong class="{return_class}">{_fmt_pct(r.Return20)}</strong></div>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+            m[1].markdown(_small_metric_card('RSI 14', f'{r.RSI:.0f}'), unsafe_allow_html=True)
+            m[2].markdown(_small_metric_card('ADX 14', f'{r.ADX:.0f}'), unsafe_allow_html=True)
+            m[3].markdown(_small_metric_card('Rel Volume', f'{r.RelVolume:.2f}×'), unsafe_allow_html=True)
+            m[4].markdown(_small_metric_card('CMF20', f'{r.CMF20:+.2f}', cmf_class), unsafe_allow_html=True)
+            m[5].markdown(_small_metric_card('Foreign 20D', foreign_value, foreign_class), unsafe_allow_html=True)
+        st.markdown('<div class="sa-panel-gap-bottom"></div>', unsafe_allow_html=True)
 
     st.markdown(
         f'<div class="sa-status sa-status-{plan["StatusKind"]}"><b>{html.escape(plan["Status"])}</b>'

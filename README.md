@@ -109,3 +109,10 @@ targets round up to valid executable prices.
 The Price card now shows `20D Return` as a separate labeled row inside the card,
 rather than using Streamlit's compact metric delta. This prevents the percentage
 from being truncated while keeping positive/negative color semantics.
+
+
+## Stock Analysis metric layout refinement
+
+- Replaced mixed Streamlit/custom metric row with fully custom aligned metric cards.
+- Price, RSI, ADX, Rel Volume, CMF20, and Foreign 20D now share the same visual height.
+- Added wider inner spacing inside the Stock Analysis summary panel so the metric boxes no longer feel too close to the outer frame.

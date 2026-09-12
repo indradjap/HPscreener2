@@ -264,3 +264,82 @@ div[data-testid="stSelectbox"] > div[data-baseweb="select"]{min-height:44px}
   .sa-return-row{font-size:9px}
   .sa-return-row strong{font-size:11px}
 }
+
+
+/* Stock Analysis — aligned metric cards and wider inner frame spacing */
+.sa-panel-gap-top{height:10px}
+.sa-panel-gap-bottom{height:8px}
+
+.sa-price-card,
+.sa-metric-card{
+  background:#fff;
+  border:1px solid #e2eae5;
+  border-radius:12px;
+  padding:18px 18px;
+  min-height:172px;
+  box-sizing:border-box;
+  display:flex;
+  flex-direction:column;
+  justify-content:flex-start;
+  box-shadow:0 1px 2px rgba(0,0,0,.02);
+}
+.sa-price-label,
+.sa-metric-label{
+  display:block;
+  color:#728176;
+  font-size:12px;
+  margin-bottom:18px;
+}
+.sa-price-value,
+.sa-metric-value{
+  display:block;
+  color:#1b2430;
+  font-size:27px;
+  font-weight:650;
+  letter-spacing:-.8px;
+  line-height:1.1;
+}
+.sa-metric-value.positive{color:#17834b}
+.sa-metric-value.negative{color:#d65f4d}
+.sa-metric-value.neutral{color:#1b2430}
+
+.sa-return-row{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+  margin-top:auto;
+  padding-top:12px;
+  border-top:1px solid #edf1ee;
+  font-size:11px;
+}
+.sa-return-row span{
+  color:#7b867f;
+  font-weight:650;
+  letter-spacing:.2px;
+  white-space:nowrap;
+}
+.sa-return-row strong{
+  font-size:13px;
+  font-weight:760;
+  white-space:nowrap;
+}
+@media(max-width:1100px){
+  .sa-price-card,
+  .sa-metric-card{min-height:154px}
+}
+@media(max-width:800px){
+  .sa-panel-gap-top{height:4px}
+  .sa-panel-gap-bottom{height:2px}
+  .sa-price-card,
+  .sa-metric-card{
+    min-height:auto;
+    padding:14px 15px;
+  }
+  .sa-price-value,
+  .sa-metric-value{font-size:21px}
+  .sa-price-label,
+  .sa-metric-label{margin-bottom:12px}
+  .sa-return-row{font-size:10px}
+  .sa-return-row strong{font-size:11px}
+}
