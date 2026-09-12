@@ -750,10 +750,7 @@ def render_smart_money(navigate=None) -> None:
         else:
             build_setup = st.session_state.smart_preset
 
-        with st.spinner(
-            f'Stage 1: screening {universe} with IDX data · '
-            'Stage 2: confirming candidates with Yahoo technicals…'
-        ):
+        with st.spinner('Loading data... please wait'):
             try:
                 data, status = build_smart_money_dataset(
                     universe=universe,
