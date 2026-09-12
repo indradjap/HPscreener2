@@ -45,7 +45,11 @@ Removed: AI Market Analyst, Education, Chart Detective, Data Sources page, insid
 
 ## Data and persistence
 
-Starts with 18 **synthetic demo** ticker series, fixed at September 11, 2026. These are not market observations, and generated weekdays are not an IDX holiday calendar. No live feed or broker feed is connected. Upload real data using Import price CSV in the sidebar; no dedicated Data Sources menu exists. Imports replace the entire session universe. Invalid input stops rendering instead of silently using demo prices.
+Defaults to **Yahoo Finance**. Click Fetch & scan in the sidebar to retrieve real adjusted daily OHLCV through yfinance. The default list contains 18 tickers; edit it to scan your own universe (up to 250), using BBCA or BBCA.JK. This list is not an official IDX index or a verified liquid-stock universe. Yahoo downloads use one request per ticker, one retry, a 15-second request timeout, and a 15-minute successful-result cache. Bypass cache explicitly when refreshing. There is no scheduled background refresh or broker feed.
+
+Today’s Jakarta-dated bar is excluded by default, even after close, to avoid incomplete daily signals. Include it only if you want provisional signals. Prices may be delayed. Adjusted OHLC includes Yahoo corporate-action adjustments, so historical levels can differ from unadjusted exchange prices. Fetch report gives every requested ticker's status, bar count, latest date and failure reason; prices older than 7 calendar days are flagged and excluded (this conservative rule can also exclude prices during long exchange closures). At least 60 rows are required. Failed downloads are never replaced with demo prices. A partial universe is clearly labeled. Input edits require another Fetch & scan; old results are labeled until then. The displayed retrieval time is when the scan assembled its results; some prices can come from the 15-minute cache.
+
+Choose Demo explicitly for the original 18 **synthetic demo** series fixed at September 11, 2026; they are not market observations and weekdays are not an IDX holiday calendar. Choose CSV upload to use your own prices in the sidebar; no dedicated Data Sources menu exists. Imports replace the entire session universe. Invalid input stops rendering instead of silently using demo prices.
 
 CSV columns: `symbol,date,open,high,low,close,volume`. Dates must be YYYY-MM-DD. Minimum 60 rows per symbol, no duplicate symbol/date rows, finite positive prices, nonnegative volume, consistent high/low ranges. Rows are sorted before analysis. Zero reference volume produces undefined ratios rather than invented signals. Different latest dates are flagged. Imported prices must have consistent corporate-action adjustment; the app does not adjust them.
 
@@ -60,9 +64,17 @@ Position sizing excludes fees/slippage and gaps can exceed the chosen stop. Jour
 ## Validation
 
 ```sh
-python -m unittest test_app -v
+python -m unittest test_app test_yahoo -v
 ```
 
 Tests cover indicator reference values, risk sizing, malformed imports, all eight page renders, screen preset changes, note saving and journal recording through Streamlit AppTest. These are runtime tests, not browser screenshot verification.
 
 Extend `market.py` for your own technical analysis. Keep new calculations independent from `app.py` so they can be tested and reused in future scheduled scans.
+
+## Yahoo adapter
+
+`yahoo.py` owns ticker normalization, retrieval and the coverage report. `app.py` caches successful per-ticker requests and connects results to all charts and screens. No Yahoo API key is required. yfinance is an unofficial client; availability and rate limits depend on Yahoo and the deployment network. The app reports provider errors rather than promising uninterrupted access. Consult Yahoo terms for your intended use.
+
+Reference: https://ranaroussi.github.io/yfinance/reference/api/yfinance.Ticker.history.html
+
+Validation for this update: all seven automated tests passed, including controlled Yahoo responses and partial-failure handling. A real BBCA.JK/ISAT.JK request from the build environment returned Yahoo rate-limit errors (and a connection timeout); successful external retrieval could not be verified here. Retry from your Streamlit deployment or local machine. The app requires working outbound access to Yahoo Finance.

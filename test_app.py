@@ -20,6 +20,7 @@ class MarketTests(unittest.TestCase):
     def test_pages(self):
         at=AppTest.from_file('app.py',default_timeout=30).run()
         self.assertEqual(len(at.exception),0)
+        at.sidebar.selectbox[0].set_value('Demo').run()
         for page in ['Market Overview','Stock Charts','Screener','Watchlist','Research Notes','Trading Journal','Calculators']:
             at.sidebar.radio[0].set_value(page).run()
             self.assertEqual(len(at.exception),0, page)

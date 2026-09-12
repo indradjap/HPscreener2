@@ -4,7 +4,8 @@ import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import streamlit as st
-from market import demo, parse_csv, indicators, scan, position_size
+from market import demo, parse_csv, indicators, scan, position_size, SYMBOLS
+from yahoo import normalize_symbols, fetch_one, fetch_universe
 
 st.set_page_config(page_title='HP Screener', page_icon='📈', layout='wide')
 st.markdown('''<style>.block-container{padding-top:2rem;max-width:1600px} [data-testid="stSidebar"]{border-right:1px solid #e2e9e4} h1{letter-spacing:-1.5px} [data-testid="stMetric"]{background:#f3f6f4;border-radius:12px;padding:16px} .hp-logo{font-size:28px;font-weight:800;color:#143a25}</style>''',unsafe_allow_html=True)
@@ -16,14 +17,35 @@ def demo_prices(): return demo()
 @st.cache_data
 def cached_scan(d): return scan(d)
 
+@st.cache_data(ttl=900, show_spinner=False)
+def cached_yahoo(symbol, period, include_today):
+    return fetch_one(symbol, period, include_today)
+
 with st.sidebar:
     st.markdown('<div class="hp-logo">HP Screener<span style="color:#22c55e">.</span></div>',unsafe_allow_html=True)
     st.caption('IDX RESEARCH WORKSPACE')
     st.divider()
     section=st.radio('Workspace',['Dashboard','Market Overview','Stock Charts','Screener','Watchlist','Research Notes','Trading Journal','Calculators'])
     st.divider()
+    source=st.selectbox('Price input',['Yahoo Finance','CSV upload','Demo'])
+    if source=='Yahoo Finance':
+        tickers=st.text_area('IDX tickers',value=', '.join(SYMBOLS),help='Separate with commas or spaces. BBCA and BBCA.JK both work. Up to 250 tickers.')
+        history=st.selectbox('Price history',['1y','2y','5y'],index=1)
+        include_today=st.checkbox('Include today’s daily bar',value=False,help='Today can be incomplete. By default all bars dated today in Jakarta are excluded, even after market close.')
+        st.caption('Yahoo daily data · adjusted OHLC · 15-minute cache · may be delayed')
+        refresh=st.checkbox('Bypass cached prices on next fetch',value=False)
+        if st.button('Fetch & scan',type='primary'):
+            try:
+                requested=normalize_symbols(tickers)
+                if refresh: cached_yahoo.clear()
+                progress=st.progress(0.,text='Downloading IDX prices…')
+                bundle=fetch_universe(requested,history,include_today,loader=cached_yahoo,progress=progress.progress)
+                st.session_state.yahoo_bundle=bundle
+                st.session_state.yahoo_request=(requested,history,include_today)
+                progress.empty()
+            except ValueError as exc: st.error(str(exc))
     with st.expander('Import price CSV'):
-        st.caption('Daily OHLCV, at least 60 rows per ticker. This replaces the demo universe for this session.')
+        st.caption('Daily OHLCV, at least 60 rows per ticker. Select CSV upload above to use this universe for this session.')
         upload=st.file_uploader('Prices',type=['csv'],key='prices_upload')
         st.download_button('Download example CSV',demo_prices().to_csv(index=False).encode(),'hp-demo-prices.csv','text/csv')
     with st.expander('Workspace backup'):
@@ -51,7 +73,33 @@ with st.sidebar:
             except (ValueError,AssertionError,KeyError,TypeError): st.error('Invalid workspace backup.')
 
 prices=demo_prices(); mode='DEMO · Synthetic prices, not live market data'
-if upload is not None:
+if source=='Yahoo Finance':
+    if 'yahoo_bundle' not in st.session_state:
+        st.title('HP Screener')
+        st.info('Enter your IDX tickers in the sidebar, then click Fetch & scan to download Yahoo Finance prices.')
+        st.stop()
+    prices,report,fetched_at=st.session_state.yahoo_bundle
+    request=st.session_state.yahoo_request
+    try: changed=(normalize_symbols(tickers),history,include_today)!=request
+    except ValueError: changed=True
+    if changed:
+        st.warning('Input settings have changed. Click Fetch & scan to apply them. Results below are from the previous fetch.')
+    good=int(report.Status.eq('OK').sum())
+    st.caption(f'Yahoo scan: {good} usable / {len(report)} requested · Retrieved {fetched_at}')
+    if good<len(report): st.warning(f'{len(report)-good} tickers failed or were stale and are excluded. Open Download report for details.')
+    with st.expander('Download report',expanded=good<len(report)):
+        st.dataframe(report,hide_index=True,width='stretch')
+        st.download_button('Export download report',report.to_csv(index=False).encode(),'hp-yahoo-report.csv','text/csv')
+    if prices.empty:
+        st.error('No usable Yahoo prices. Check the download report and retry. No demo prices have been substituted.')
+        st.stop()
+    mode='YAHOO FINANCE · Adjusted daily prices · May be delayed'
+    if request[2]: st.warning('Today’s bar is included and may still be incomplete. Signals can change.')
+    else: st.caption('Conservative daily scan: all bars dated today in Jakarta are excluded.')
+    st.download_button('Export fetched prices',prices.to_csv(index=False).encode(),'hp-yahoo-prices.csv','text/csv')
+elif source=='CSV upload':
+    if upload is None:
+        st.info('Upload a price CSV using the sidebar.'); st.stop()
     try:
         prices=parse_csv(upload.getvalue()); mode='IMPORTED · User-supplied daily prices'
     except Exception as e:
