@@ -220,7 +220,8 @@ def _heatmap_figure(d: pd.DataFrame, *, size_col: str, group_col: str) -> go.Fig
             tiling=dict(packing='squarify', pad=1.4),
             pathbar=dict(visible=False),
             root_color='#ffffff',
-            maxdepth=2,
+            # Do not cap depth here. Tree structure is IDXROOT -> Sector/SubSector -> Stock.
+            # A depth cap here would hide stock leaves and show only sector containers.
             sort=False,
         )
     )

@@ -18,3 +18,12 @@ Stock logos are intentionally not fabricated. The current IDX feeds used by this
 
 ## Deploy
 Upload the contents of this folder to the GitHub repository root and deploy `app.py` on Streamlit Community Cloud.
+
+
+## v3 heatmap visibility fix
+Removed the Plotly treemap depth cap that hid stock-level tiles. The tree is IDX root → sector/subsector → stock; the previous `maxdepth=2` rendered sector parents but suppressed stock leaves. v3 renders the full tree.
+
+
+## Sidebar refinement v4
+
+Removed the `WORKSPACE` navigation group label. Dashboard and Market Overview now appear directly under the HP Screener branding with no menu grouping.

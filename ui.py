@@ -20,8 +20,6 @@ def sidebar_menu() -> str:
         '<div class="brand-sub">TWO-MENU FUNCTION TEST</div>',
         unsafe_allow_html=True,
     )
-    st.markdown('<div class="nav-label">WORKSPACE</div>', unsafe_allow_html=True)
-
     for page, icon in MENUS:
         active = st.session_state['page'] == page
         if st.button(
