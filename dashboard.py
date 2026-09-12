@@ -86,6 +86,11 @@ def _fmt_volume(value: float) -> str:
 
 
 def _stock_chart(frame: pd.DataFrame, symbol: str) -> go.Figure:
+    frame = frame.copy()
+    frame['ma20'] = frame['close'].rolling(20, min_periods=1).mean()
+    frame['ma50'] = frame['close'].rolling(50, min_periods=1).mean()
+    frame['ma200'] = frame['close'].rolling(200, min_periods=1).mean()
+
     last_close = float(frame.close.iloc[-1])
     volume_colors = [
         'rgba(43,177,116,.20)' if c >= o else 'rgba(231,76,72,.20)'
@@ -115,7 +120,34 @@ def _stock_chart(frame: pd.DataFrame, symbol: str) -> go.Figure:
         col=1,
     )
     fig.add_trace(
-        go.Bar(x=frame.date, y=frame.volume, name='Volume', marker_color=volume_colors),
+        go.Scatter(
+            x=frame.date, y=frame.ma20, mode='lines', name='MA20',
+            line=dict(color='#2f80ed', width=1.8),
+            hovertemplate='MA20: %{y:,.2f}<extra></extra>'
+        ),
+        row=1,
+        col=1,
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=frame.date, y=frame.ma50, mode='lines', name='MA50',
+            line=dict(color='#f2994a', width=1.8),
+            hovertemplate='MA50: %{y:,.2f}<extra></extra>'
+        ),
+        row=1,
+        col=1,
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=frame.date, y=frame.ma200, mode='lines', name='MA200',
+            line=dict(color='#9b51e0', width=1.8),
+            hovertemplate='MA200: %{y:,.2f}<extra></extra>'
+        ),
+        row=1,
+        col=1,
+    )
+    fig.add_trace(
+        go.Bar(x=frame.date, y=frame.volume, name='Volume', marker_color=volume_colors, showlegend=False),
         row=2,
         col=1,
     )
@@ -141,10 +173,15 @@ def _stock_chart(frame: pd.DataFrame, symbol: str) -> go.Figure:
         borderpad=4,
     )
     fig.update_layout(
-        height=505,
+        height=525,
         template='plotly_white',
-        margin=dict(l=5, r=8, t=5, b=5),
-        showlegend=False,
+        margin=dict(l=5, r=8, t=8, b=5),
+        showlegend=True,
+        legend=dict(
+            orientation='h', yanchor='bottom', y=1.01, xanchor='left', x=0,
+            bgcolor='rgba(255,255,255,0.85)', bordercolor='#e6ece8', borderwidth=1,
+            font=dict(size=11)
+        ),
         xaxis_rangeslider_visible=False,
         hovermode='x unified',
         paper_bgcolor='white',
