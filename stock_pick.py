@@ -565,11 +565,12 @@ def render_stock_pick(navigate=None) -> None:
             f'<div class="sp-why">{html.escape(str(r.Why))}</div>',
             unsafe_allow_html=True,
         )
-        if cols[6].button('Chart', icon=':material/show_chart:', key='sp_chart_' + str(r.Symbol), width='stretch'):
-            st.session_state.dashboard_symbol = str(r.Symbol)
-            st.session_state.dashboard_search = str(r.Symbol)
+        if cols[6].button('Analyze', icon=':material/analytics:', key='sp_analyze_' + str(r.Symbol), width='stretch'):
+            st.session_state.analysis_symbol = str(r.Symbol)
+            st.session_state.analysis_search = str(r.Symbol)
+            st.session_state.analysis_prefill = r.to_dict()
             if navigate:
-                navigate('Dashboard')
+                navigate('Stock Analysis')
             st.rerun()
         st.markdown('<div class="sp-row-divider"></div>', unsafe_allow_html=True)
 

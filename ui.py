@@ -6,6 +6,7 @@ MENUS = (
     ('Market Overview', 'public'),
     ('Smart Money Screener', 'filter_alt'),
     ('Stock Pick', 'stars'),
+    ('Stock Analysis', 'query_stats'),
 )
 
 

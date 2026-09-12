@@ -72,3 +72,7 @@ Score = 100 points:
 Golden Cross is only a small bonus and is not required. The menu classifies candidates as
 Base Breakout, Breakout, Pullback MA20, Trend Continuation, Early Reversal, or Momentum Watch.
 Entry, stop, T1 and T2 are mechanical ATR-based research levels, not recommendations.
+
+## Stock Analysis
+
+Single-stock swing research page. Search any 4-character IDX ticker to review technical structure, relative strength versus IHSG, support/resistance, Stock Pick Score, conditional entry scenarios, ATR-based stop/targets, invalidation conditions, and a concise analysis summary. Stock Pick rows link directly into this page through the **Analyze** button.
