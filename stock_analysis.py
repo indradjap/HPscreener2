@@ -352,6 +352,8 @@ def _entry_plan(r: pd.Series, levels: dict) -> dict:
     alt_structure = _structure_rr(alt_mid, alt_stop, levels)
 
     invalidations = []
+    risk_warnings = []
+
     invalidations.append(f'Daily close below {_fmt_price(stop)} invalidates the primary risk structure.')
     if trend_ok:
         invalidations.append('A decisive loss of MA20/MA50 trend structure weakens the medium-term setup.')
@@ -364,11 +366,18 @@ def _entry_plan(r: pd.Series, levels: dict) -> dict:
     if breakout_active:
         invalidations.append('A breakout that falls back below the pivot on weak volume is a failed-breakout warning.')
 
-    if pd.notna(primary_structure['StructureRR']) and primary_structure['StructureRR'] < 1.5:
-        invalidations.append(
-            f'Nearest resistance offers only {primary_structure["StructureRR"]:.1f}R; '
-            'the setup is structurally tight even though the mechanical TP ladder extends further.'
-        )
+    # Structural risk/reward is a quality warning, not an invalidation.
+    if pd.notna(primary_structure['StructureRR']):
+        if primary_structure['StructureRR'] < 1.5:
+            risk_warnings.append(
+                f'Nearest resistance offers only {primary_structure["StructureRR"]:.1f}R. '
+                'Risk/reward is structurally tight; TP1 around 2R requires a clean resistance breakout first.'
+            )
+        elif primary_structure['StructureRR'] < 2.0:
+            risk_warnings.append(
+                f'Nearest resistance is around {primary_structure["StructureRR"]:.1f}R. '
+                'The setup is acceptable but below the ideal ~2R first-target room.'
+            )
 
     return {
         'Status': status, 'StatusKind': status_kind,
@@ -391,6 +400,7 @@ def _entry_plan(r: pd.Series, levels: dict) -> dict:
         'IDXFraction': idx_price_fraction(close),
         'FractionReferenceClose': close,
         'Invalidations': invalidations,
+        'RiskWarnings': risk_warnings,
     }
 
 
@@ -652,9 +662,21 @@ def render_stock_analysis(navigate=None) -> None:
         with st.container(border=True):
             st.markdown('<div class="sa-section-title">Invalidation / avoid</div>', unsafe_allow_html=True)
             st.markdown(
-                '<div class="sa-invalidation">' + ''.join(f'<div>• {html.escape(x)}</div>' for x in plan['Invalidations']) + '</div>',
+                '<div class="sa-invalidation">' + ''.join(
+                    f'<div>• {html.escape(x)}</div>' for x in plan['Invalidations']
+                ) + '</div>',
                 unsafe_allow_html=True,
             )
+
+        if plan.get('RiskWarnings'):
+            with st.container(border=True):
+                st.markdown('<div class="sa-section-title">Risk warning</div>', unsafe_allow_html=True)
+                st.markdown(
+                    '<div class="sa-risk-warning">' + ''.join(
+                        f'<div>• {html.escape(x)}</div>' for x in plan['RiskWarnings']
+                    ) + '</div>',
+                    unsafe_allow_html=True,
+                )
 
     a, b = st.columns([1, 4])
     if a.button('Open Dashboard', icon=':material/show_chart:', width='stretch', key='sa_dashboard'):

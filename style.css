@@ -343,3 +343,12 @@ div[data-testid="stSelectbox"] > div[data-baseweb="select"]{min-height:44px}
   .sa-return-row{font-size:10px}
   .sa-return-row strong{font-size:11px}
 }
+
+
+/* Stock Analysis — structural RR is shown as a risk warning, not invalidation */
+.sa-risk-warning{
+  font-size:12px;
+  line-height:1.65;
+  color:#7a5b22;
+}
+.sa-risk-warning div{margin-bottom:5px}

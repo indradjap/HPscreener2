@@ -182,3 +182,13 @@ version in its cache key and a backward-compatible schema normalizer.
 If a legacy cached frame lacks `Target3` or `SupportTarget3`, those fields are
 reconstructed using the current 4R convention before rendering. The UI also uses
 safe Series access so a stale cache cannot crash the page with AttributeError.
+
+
+## Stock Analysis invalidation / risk-warning split
+
+Structural risk/reward warnings are no longer mixed into `Invalidation / avoid`.
+
+- `Invalidation / avoid` contains stop/invalidation, trend deterioration, relative-strength deterioration and failed-breakout conditions.
+- `Risk warning` contains structural RR observations such as nearby resistance below ~1.5R or below the ideal ~2R first-target room.
+
+This keeps a poor Structure RR from being interpreted as automatically invalidating the setup.
