@@ -459,11 +459,6 @@ def render_stock_analysis(navigate=None) -> None:
             )
 
     st.markdown('<div class="sa-section-heading">Entry plan</div>', unsafe_allow_html=True)
-    st.caption(
-        f'IDX price fraction used for executable plan levels: Rp{int(plan["IDXFraction"])} '
-        f'(based on latest close {_fmt_price(plan["FractionReferenceClose"])} for the next trading session). '
-        'IDX applies one price fraction for the full trading day and adjusts it on the following trading day if the closing price moves into another price group.'
-    )
     p1, p2 = st.columns(2, vertical_alignment='top')
     with p1:
         with st.container(border=True):
