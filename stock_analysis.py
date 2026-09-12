@@ -9,6 +9,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from idx_official import fetch_stock_screener_metadata
+from idx_price import idx_price_fraction, round_idx_price
 from stock_pick import (
     _benchmark_returns,
     _fmt_pct,
@@ -167,14 +168,14 @@ def _key_levels(raw: pd.DataFrame, r: pd.Series) -> dict:
     }
 
 
-def _rr_targets(entry_mid: float, stop: float) -> dict:
+def _rr_targets(entry_mid: float, stop: float, reference_close: float) -> dict:
     risk = max(entry_mid - stop, entry_mid * 0.005)
     return {
         'RiskPerShare': risk,
         'RiskPct': risk / entry_mid * 100 if entry_mid else np.nan,
-        'T1': entry_mid + 2.0 * risk,
-        'T2': entry_mid + 3.0 * risk,
-        'T3': entry_mid + 4.0 * risk,
+        'T1': round_idx_price(entry_mid + 2.0 * risk, reference_close, 'ceil'),
+        'T2': round_idx_price(entry_mid + 3.0 * risk, reference_close, 'ceil'),
+        'T3': round_idx_price(entry_mid + 4.0 * risk, reference_close, 'ceil'),
     }
 
 
@@ -230,20 +231,27 @@ def _entry_plan(r: pd.Series, levels: dict) -> dict:
         stop = max(valid) if valid else entry_low - 1.5 * atr
         plan_note = 'Wait for price to prove strength above the nearest pivot before treating the setup as active.'
 
+    # Align executable prices to the IDX fraction applicable to the next
+    # session, using the latest close as the reference close.
+    entry_low = round_idx_price(entry_low, close, 'floor')
+    entry_high = round_idx_price(entry_high, close, 'ceil')
+    stop = round_idx_price(stop, close, 'floor')
     entry_mid = (entry_low + entry_high) / 2
-    primary_rr = _rr_targets(entry_mid, stop)
+    primary_rr = _rr_targets(entry_mid, stop, close)
 
     # Alternative breakout scenario is always available as a conditional plan.
     breakout_trigger = levels['Resistance1']
     if breakout_trigger <= close:
         breakout_trigger = max(levels['High55'] if pd.notna(levels['High55']) else close, close + 0.50 * atr)
+    breakout_trigger = round_idx_price(breakout_trigger, close, 'ceil')
     alt_low = breakout_trigger
-    alt_high = breakout_trigger + 0.30 * atr
+    alt_high = round_idx_price(breakout_trigger + 0.30 * atr, close, 'ceil')
     alt_mid = (alt_low + alt_high) / 2
     alt_stop_candidates = [levels['Pivot'] - 0.50 * atr, ma20 - 0.35 * atr, alt_low - 1.7 * atr]
     valid_alt = [x for x in alt_stop_candidates if x < alt_low]
-    alt_stop = max(valid_alt) if valid_alt else alt_low - 1.7 * atr
-    alt_rr = _rr_targets(alt_mid, alt_stop)
+    alt_stop_raw = max(valid_alt) if valid_alt else alt_low - 1.7 * atr
+    alt_stop = round_idx_price(alt_stop_raw, close, 'floor')
+    alt_rr = _rr_targets(alt_mid, alt_stop, close)
 
     invalidations = []
     invalidations.append(f'Daily close below {_fmt_price(stop)} invalidates the primary risk structure.')
@@ -268,6 +276,8 @@ def _entry_plan(r: pd.Series, levels: dict) -> dict:
         'AltEntryLow': alt_low, 'AltEntryHigh': alt_high, 'AltStop': alt_stop,
         'AltT1': alt_rr['T1'], 'AltT2': alt_rr['T2'], 'AltT3': alt_rr['T3'],
         'AltRiskPct': alt_rr['RiskPct'],
+        'IDXFraction': idx_price_fraction(close),
+        'FractionReferenceClose': close,
         'Invalidations': invalidations,
     }
 
@@ -449,6 +459,11 @@ def render_stock_analysis(navigate=None) -> None:
             )
 
     st.markdown('<div class="sa-section-heading">Entry plan</div>', unsafe_allow_html=True)
+    st.caption(
+        f'IDX price fraction used for executable plan levels: Rp{int(plan["IDXFraction"])} '
+        f'(based on latest close {_fmt_price(plan["FractionReferenceClose"])} for the next trading session). '
+        'IDX applies one price fraction for the full trading day and adjusts it on the following trading day if the closing price moves into another price group.'
+    )
     p1, p2 = st.columns(2, vertical_alignment='top')
     with p1:
         with st.container(border=True):

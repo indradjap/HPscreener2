@@ -76,3 +76,20 @@ Entry, stop, T1 and T2 are mechanical ATR-based research levels, not recommendat
 ## Stock Analysis
 
 Single-stock swing research page. Search any 4-character IDX ticker to review technical structure, relative strength versus IHSG, support/resistance, Stock Pick Score, conditional entry scenarios, ATR-based stop/targets, invalidation conditions, and a concise analysis summary. Stock Pick rows link directly into this page through the **Analyze** button.
+
+## IDX price-fraction handling
+
+Executable Stock Pick / Stock Analysis plan prices now follow IDX regular/cash
+market price fractions:
+
+- reference close < Rp200: Rp1
+- Rp200 to < Rp500: Rp2
+- Rp500 to < Rp2,000: Rp5
+- Rp2,000 to < Rp5,000: Rp10
+- >= Rp5,000: Rp25
+
+IDX applies the applicable fraction for one full trading day and adjusts it on
+the next trading day when the closing price moves into another price group.
+For next-session swing plans, the latest close is used as the fraction reference.
+Entry-zone lows and stops round down; entry-zone highs, breakout triggers and
+targets round up to valid executable prices.

@@ -8,6 +8,7 @@ import pandas as pd
 import streamlit as st
 
 from smart_money import _quality_universe, cached_idx_smart_base
+from idx_price import idx_price_fraction, round_idx_price
 from yahoo_download import download_universe
 
 
@@ -185,18 +186,26 @@ def _technical_row(symbol: str, raw: pd.DataFrame, benchmark_ret: dict) -> dict 
     prev_ma20 = ma20.iloc[-2]
     reclaim_ma20 = bool(pd.notna(prev_ma20) and c.iloc[-2] <= prev_ma20 and close > m20)
 
-    # Risk plan: below MA20/ATR support, capped near 2 ATR. Targets use R multiples.
+    # Risk plan: below MA20/ATR support, capped near 2 ATR.
+    # All executable prices are aligned to the IDX fraction applicable to the
+    # next session, using the latest close as the reference close.
     if pd.notna(atr14) and atr14 > 0:
         atr_stop = close - 2.0 * atr14
         ma_stop = m20 - 0.5 * atr14 if pd.notna(m20) and m20 < close else atr_stop
-        stop = max(atr_stop, ma_stop)
-        if stop >= close:
-            stop = close - 1.5 * atr14
+        stop_raw = max(atr_stop, ma_stop)
+        if stop_raw >= close:
+            stop_raw = close - 1.5 * atr14
+
+        entry_low_raw = close if breakout20 else max(close - 0.25 * atr14, 0)
+        entry_high_raw = close + 0.35 * atr14
+
+        entry_low = round_idx_price(entry_low_raw, close, "floor")
+        entry_high = round_idx_price(entry_high_raw, close, "ceil")
+        stop = round_idx_price(stop_raw, close, "floor")
+
         risk = max(close - stop, atr14 * 0.5)
-        entry_low = close if breakout20 else max(close - 0.25 * atr14, 0)
-        entry_high = close + 0.35 * atr14
-        t1 = close + 2.0 * risk
-        t2 = close + 3.0 * risk
+        t1 = round_idx_price(close + 2.0 * risk, close, "ceil")
+        t2 = round_idx_price(close + 3.0 * risk, close, "ceil")
         stop_pct = (close - stop) / close * 100
     else:
         entry_low = entry_high = stop = t1 = t2 = stop_pct = np.nan
