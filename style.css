@@ -4,7 +4,7 @@
 [data-testid="stSidebar"]{background:white;border-right:1px solid #e5ebe7;min-width:255px;max-width:275px}
 [data-testid="stSidebarUserContent"]{padding:1.4rem 1rem}
 [data-testid="stSidebar"] [data-testid="stVerticalBlock"]{gap:.25rem}
-[data-testid="stSidebar"] button{justify-content:flex-start;min-height:35px;border-radius:9px;font-weight:500}
+[data-testid="stSidebar"] button{justify-content:flex-start;min-height:44px;border-radius:12px;font-weight:600;padding:0 12px}
 [data-testid="stSidebar"] button[kind="primary"]{background:#e5f5e9;color:#146438;border:1px solid #d6eddd;box-shadow:none}
 [data-testid="stSidebar"] button[kind="tertiary"]:hover{background:#f2f7f4}
 .brand{font-size:27px;font-weight:650;letter-spacing:-1px;line-height:1.5}.brand>span:first-child{display:inline-block;background:#152e21;color:#b5f582;border-radius:10px;padding:0 7px;font-weight:850;margin-right:5px}.dot{color:#179954}.brand-sub{font-size:10px;letter-spacing:1.7px;color:#7a8c81;margin:5px 0 20px}.nav-label{font-size:10px;font-weight:700;letter-spacing:1.2px;color:#8a978f;padding:17px 10px 5px}
@@ -44,7 +44,6 @@ button[kind="primary"]{background:#17834b;border-color:#17834b}
 @media(max-width:800px){.market-title{font-size:26px}.market-card-title{font-size:17px}.market-summary-line{font-size:11px}}
 
 /* Two-menu test wrapper */
-.test-note{margin:22px 8px 0;padding:10px 11px;border-radius:9px;background:#f5f8f6;color:#77847c;font-size:10px;line-height:1.45;border:1px solid #e7ece9}
 [data-testid="stSidebar"] .brand-sub{margin-bottom:10px}
 @media(max-width:800px){[data-testid="stSidebar"]{min-width:235px;max-width:255px}}
 
@@ -80,3 +79,14 @@ div[data-testid="stSelectbox"] input{font-size:13px!important;font-weight:650!im
 .mover-row{min-height:58px;padding:7px 8px;border-bottom:1px solid #e6eae8}
 .mover-row:last-child{border-bottom:0}.mover-symbol{font-size:16px;font-weight:760;color:#131915;letter-spacing:.1px}.mover-symbol span{display:inline-block;min-width:62px}.mover-close{text-align:right;font-size:16px;color:#1d2520;font-variant-numeric:tabular-nums}.mover-metric{text-align:right;font-size:16px;font-weight:720;color:#29332d;font-variant-numeric:tabular-nums}.mover-subchg{display:block;font-size:11px;font-weight:650;margin-top:3px}.mover-source{font-size:11px;color:#7a847e;text-align:right;padding:9px 8px 2px}
 @media(max-width:800px){.movers-title{font-size:19px}.mover-header,.mover-row{grid-template-columns:1fr .7fr .85fr;column-gap:8px}.mover-header{font-size:11px}.mover-row{min-height:52px}.mover-symbol,.mover-close,.mover-metric{font-size:13px}}
+
+
+/* Sidebar polish */
+[data-testid="stSidebar"] .brand-sub{margin:6px 0 16px;font-size:11px;letter-spacing:2.2px;color:#819087}
+[data-testid="stSidebar"] button > div{display:flex;align-items:center;justify-content:flex-start;gap:12px;width:100%}
+[data-testid="stSidebar"] button [data-testid="stMarkdownContainer"] p{margin:0!important;line-height:1.2!important;font-size:16px!important;font-weight:600!important}
+[data-testid="stSidebar"] button [data-testid="stIconMaterial"]{display:inline-flex!important;align-items:center!important;justify-content:center!important;width:20px!important;min-width:20px!important;height:20px!important;line-height:1!important;margin:0!important}
+[data-testid="stSidebar"] button svg{vertical-align:middle}
+[data-testid="stSidebar"] button[kind="primary"]{background:#e5f0e7;color:#24583a;border:1px solid #d2e2d7;box-shadow:none}
+[data-testid="stSidebar"] button[kind="tertiary"]{background:transparent;color:#233030;border:1px solid transparent}
+[data-testid="stSidebar"] button[kind="tertiary"]:hover{background:#f2f7f4;border-color:#edf2ef}

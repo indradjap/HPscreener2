@@ -17,7 +17,7 @@ def sidebar_menu() -> str:
 
     st.markdown(
         '<div class="brand"><span>HP</span> screener<span class="dot">.</span></div>'
-        '<div class="brand-sub">TWO-MENU FUNCTION TEST</div>',
+        '<div class="brand-sub">SCAN SMART. STAY AHEAD.</div>',
         unsafe_allow_html=True,
     )
     for page, icon in MENUS:
@@ -32,10 +32,6 @@ def sidebar_menu() -> str:
             st.session_state['page'] = page
             st.rerun()
 
-    st.markdown(
-        '<div class="test-note">This build intentionally contains only Dashboard and Market Overview.</div>',
-        unsafe_allow_html=True,
-    )
     return st.session_state['page']
 
 
