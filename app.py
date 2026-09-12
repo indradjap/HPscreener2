@@ -5,7 +5,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import streamlit as st
 from market import demo, parse_csv, indicators, scan, position_size, SYMBOLS
-from yahoo import normalize_symbols, fetch_one, fetch_universe
+from yahoo import normalize_symbols, fetch_universe, quality_universe
 
 st.set_page_config(page_title='HP Screener', page_icon='📈', layout='wide')
 st.markdown('''<style>.block-container{padding-top:2rem;max-width:1600px} [data-testid="stSidebar"]{border-right:1px solid #e2e9e4} h1{letter-spacing:-1.5px} [data-testid="stMetric"]{background:#f3f6f4;border-radius:12px;padding:16px} .hp-logo{font-size:28px;font-weight:800;color:#143a25}</style>''',unsafe_allow_html=True)
@@ -17,9 +17,9 @@ def demo_prices(): return demo()
 @st.cache_data
 def cached_scan(d): return scan(d)
 
-@st.cache_data(ttl=900, show_spinner=False)
-def cached_yahoo(symbol, period, include_today):
-    return fetch_one(symbol, period, include_today)
+@st.cache_data(ttl=1800, show_spinner=False)
+def cached_yahoo(symbols, period, include_today, chunk_size):
+    return fetch_universe(symbols, period, include_today, chunk_size)
 
 with st.sidebar:
     st.markdown('<div class="hp-logo">HP Screener<span style="color:#22c55e">.</span></div>',unsafe_allow_html=True)
@@ -29,20 +29,24 @@ with st.sidebar:
     st.divider()
     source=st.selectbox('Price input',['Yahoo Finance','CSV upload','Demo'])
     if source=='Yahoo Finance':
-        tickers=st.text_area('IDX tickers',value=', '.join(SYMBOLS),help='Separate with commas or spaces. BBCA and BBCA.JK both work. Up to 250 tickers.')
+        universe=st.selectbox('Universe',['Quality 200','Quick test (18)','Custom tickers'])
+        if universe=='Custom tickers':
+            tickers=st.text_area('IDX tickers',value=', '.join(SYMBOLS),help='Separate with commas or spaces. BBCA and BBCA.JK both work. Up to 250 tickers.')
+        else: tickers=', '.join(quality_universe() if universe=='Quality 200' else SYMBOLS)
+        st.caption(f'{len(normalize_symbols(tickers)) if universe!="Custom tickers" else "Custom"} tickers · Quality 200 is the bundled selection, not an official index.')
+        chunk_size=st.select_slider('Download batch size',options=[20,40,60,80,100],value=60)
         history=st.selectbox('Price history',['1y','2y','5y'],index=1)
         include_today=st.checkbox('Include today’s daily bar',value=False,help='Today can be incomplete. By default all bars dated today in Jakarta are excluded, even after market close.')
-        st.caption('Yahoo daily data · adjusted OHLC · 15-minute cache · may be delayed')
+        st.caption('Yahoo daily data · unadjusted OHLC · 30-minute cache · may be delayed')
         refresh=st.checkbox('Bypass cached prices on next fetch',value=False)
         if st.button('Fetch & scan',type='primary'):
             try:
                 requested=normalize_symbols(tickers)
                 if refresh: cached_yahoo.clear()
-                progress=st.progress(0.,text='Downloading IDX prices…')
-                bundle=fetch_universe(requested,history,include_today,loader=cached_yahoo,progress=progress.progress)
+                with st.spinner(f'Downloading {len(requested)} tickers in batches of {chunk_size}; retrying missing tickers…'):
+                    bundle=cached_yahoo(requested,history,include_today,chunk_size)
                 st.session_state.yahoo_bundle=bundle
                 st.session_state.yahoo_request=(requested,history,include_today)
-                progress.empty()
             except ValueError as exc: st.error(str(exc))
     with st.expander('Import price CSV'):
         st.caption('Daily OHLCV, at least 60 rows per ticker. Select CSV upload above to use this universe for this session.')
@@ -65,7 +69,8 @@ with st.sidebar:
                     for f in ('Entry','Exit','Lots','Fees','PnL'): assert isinstance(t[f],(int,float)) and abs(t[f])<1e15
                 assert isinstance(x.get('saved_rules'),dict)
                 for r in x['saved_rules'].values():
-                    assert set(r)=={'min_rsi','max_rsi','rel_volume','trend','breakout','golden'}
+                    assert {'min_rsi','max_rsi','rel_volume','trend','breakout','golden'}.issubset(r)
+                    assert 0<=r.get('liquidity',0)<=10000 and isinstance(r.get('stoch_cross',False),bool)
                     assert 0<=r['min_rsi']<=r['max_rsi']<=100 and 0<=r['rel_volume']<=100
                     assert all(isinstance(r[k],bool) for k in ('trend','breakout','golden'))
                 for k in payload: st.session_state[k]=x[k]
@@ -93,7 +98,7 @@ if source=='Yahoo Finance':
     if prices.empty:
         st.error('No usable Yahoo prices. Check the download report and retry. No demo prices have been substituted.')
         st.stop()
-    mode='YAHOO FINANCE · Adjusted daily prices · May be delayed'
+    mode='YAHOO FINANCE · Unadjusted daily prices · May be delayed'
     if request[2]: st.warning('Today’s bar is included and may still be incomplete. Signals can change.')
     else: st.caption('Conservative daily scan: all bars dated today in Jakarta are excluded.')
     st.download_button('Export fetched prices',prices.to_csv(index=False).encode(),'hp-yahoo-prices.csv','text/csv')
@@ -111,11 +116,11 @@ st.caption(f'{len(results)} tickers · Latest date {prices.date.max():%d %b %Y} 
 if results.Date.nunique()>1: st.warning('Tickers have different latest dates. Check the Date column before comparing results.')
 
 def table(d,name='results'):
-    st.dataframe(d,hide_index=True,width='stretch',column_config={k:st.column_config.NumberColumn(format='%.2f') for k in ['Close','ChangePct','RSI','RelVolume','CMF'] if k in d})
+    st.dataframe(d,hide_index=True,width='stretch',column_config={k:st.column_config.NumberColumn(format='%.2f') for k in ['Close','ChangePct','RSI','RelVolume','CMF','AvgValue20B','StochK','StochD'] if k in d})
     st.download_button('Export CSV',d.to_csv(index=False).encode(),f'hp-{name}.csv','text/csv',key='export_'+name)
 
 def chart():
-    a,b,c=st.columns([2,1,1]); symbol=a.selectbox('Stock',sorted(prices.symbol.unique())); period=b.selectbox('Period',['1 month','3 months','6 months','1 year'],index=2); overlay=c.multiselect('Overlays',['MA20','MA50','EMA20','EMA50'],default=['MA20','MA50'])
+    a,b,c=st.columns([2,1,1]); symbol=a.selectbox('Stock',sorted(prices.symbol.unique())); period=b.selectbox('Period',['1 month','3 months','6 months','1 year'],index=2); overlay=c.multiselect('Overlays',['MA20','MA50','MA200','EMA20','EMA50','EMA200'],default=['MA20','MA50'])
     d=indicators(prices[prices.symbol==symbol]); x=d.iloc[-1]
     m=st.columns(4)
     for col,label,val in zip(m,['Close','Change','RSI (14)','Relative volume'],[f'{x.close:,.0f}',f'{x.ChangePct:+.2f}%',f'{x.RSI:.1f}',f'{x.RelVolume:.2f}×']): col.metric(label,val)
@@ -160,13 +165,19 @@ elif section=='Screener':
     trend=cols[0].checkbox('Close > MA20 > MA50',defaults['trend'],key=key+'trend')
     breakout=cols[1].checkbox('Close > prior 20-day high',defaults['breakout'],key=key+'breakout')
     golden=cols[2].checkbox('EMA20 crosses above EMA50 today',defaults['golden'],key=key+'golden')
+    a,b=st.columns(2)
+    liquidity=a.number_input('Minimum average traded value (Rp billion/day)',0.,10000.,float(defaults.get('liquidity',5.)),1.,key=key+'liquidity')
+    stoch_cross=b.checkbox('Stochastic RSI K crosses above D today',value=defaults.get('stoch_cross',False),key=key+'stoch')
+    st.caption('Traded value estimates close × volume, averaged over the latest 20 bars. Set minimum to 0 to disable. Stoch RSI uses 14 RSI bars with 3/3 smoothing.')
     d=results[results.RSI.between(lo,hi)&results.RelVolume.ge(rv)&results.Symbol.str.contains(search,regex=False)]
+    d=d[d.AvgValue20B>=liquidity]
+    if stoch_cross: d=d[d.StochCross]
     for flag,column in [(trend,'Trend'),(breakout,'Breakout'),(golden,'GoldenCross')]:
         if flag: d=d[d[column]]
     st.subheader(f'{len(d)} matches / {len(results)} tickers'); table(d,'screen')
     name=st.text_input('Save these conditions as')
     if st.button('Save screen',disabled=not name.strip()):
-        st.session_state.saved_rules[name.strip()]=dict(min_rsi=lo,max_rsi=hi,rel_volume=rv,trend=trend,breakout=breakout,golden=golden)
+        st.session_state.saved_rules[name.strip()]=dict(min_rsi=lo,max_rsi=hi,rel_volume=rv,trend=trend,breakout=breakout,golden=golden,liquidity=liquidity,stoch_cross=stoch_cross)
         st.success('Saved for this session. Download a workspace backup to keep it.')
     with st.expander('How scores are calculated'):
         st.write('Six equal checks: close above MA20; MA20 above MA50; RSI ≥ 50; MACD histogram positive; relative volume ≥ 1.5; CMF positive. Score is the percentage passed, not a probability or recommendation. Relative volume compares today with the previous 20 sessions. CMF is a price/volume proxy, not verified broker accumulation.')

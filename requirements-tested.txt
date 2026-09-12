@@ -1,0 +1,8 @@
+# Exact versions used for local tests under Python 3.12.
+# Community Cloud installs requirements.txt, which follows the working package’s unpinned approach.
+streamlit==1.63.0
+pandas==2.2.3
+numpy==2.3.5
+plotly==7.0.0
+yfinance==1.7.0
+curl_cffi==0.16.3
