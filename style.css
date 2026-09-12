@@ -110,3 +110,17 @@ div[data-testid="stSelectbox"] > div[data-baseweb="select"]{min-height:44px}
 .dashboard-search-wrap [data-testid="stForm"]{background:transparent;border:0;padding:0}
 @media(max-width:1100px){.dashboard-search-wrap{padding-top:18px;max-width:none}}
 @media(max-width:800px){.dashboard-search-wrap{padding-top:0;margin-left:0}}
+
+/* Smart Money Screener */
+.sm-page-title{font-size:31px;font-weight:760;letter-spacing:-1px;color:#15241c;margin:.2rem 0 1rem}
+.sm-setup-title{font-size:18px;font-weight:740;color:#17231c;margin:2px 0 2px}.sm-setup-sub{font-size:13px;color:#79817d;margin-bottom:14px}
+.sm-asof{text-align:right;color:#747c78;font-size:12px;margin:5px 2px 12px}
+.sm-results-title{font-size:20px;font-weight:750;color:#142019;margin:2px 0}.sm-results-sub{font-size:13px;color:#78817c;margin-bottom:18px}
+.sm-match-count{font-size:12px;color:#6f7a73;margin:8px 0 10px}.sm-match-count b{color:#1d3527;font-size:15px}
+.sm-table-head{font-size:11px;text-transform:uppercase;letter-spacing:.7px;color:#747d77;font-weight:760;padding:7px 2px}
+.sm-divider,.sm-row-divider{height:1px;background:#e5e9e6}.sm-row-divider{margin:8px 0}
+.sm-stock b{display:block;font-size:15px;color:#151c18}.sm-stock span{display:block;font-size:12px;color:#727a76;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.sm-stock small{display:inline-block;font-size:9px;color:#66746b;background:#f1f5f2;border:1px solid #e2e9e4;border-radius:10px;padding:2px 6px;margin-top:5px}
+.sm-number{font-size:14px;color:#1b241f;font-weight:650;text-align:right;font-variant-numeric:tabular-nums}
+.sm-chip-wrap{display:flex;gap:5px;flex-wrap:wrap;align-items:center}.sm-chip{display:inline-block;border:1px solid #e1e5e3;border-radius:12px;padding:3px 8px;font-size:10px;color:#5f6963;background:#fff;line-height:1.2;white-space:nowrap}.sm-good{color:#258a59;border-color:#d5eadf;background:#f4fbf7}.sm-bad{color:#d84650;border-color:#f0d8dc;background:#fff7f8}.sm-neutral{color:#606963}
+[data-testid="stSidebar"] button[kind="primary"]{font-weight:650}
+@media(max-width:900px){.sm-page-title{font-size:27px}.sm-table-head{font-size:9px}.sm-chip{font-size:9px;padding:2px 6px}.sm-stock span{font-size:10px}.sm-number{font-size:12px}}

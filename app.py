@@ -3,6 +3,7 @@ import streamlit as st
 from dashboard import render_dashboard
 from idx_official import build_idx_heatmap_dataset, fetch_latest_investor_flow
 from market_overview import render_market_overview
+from smart_money import render_smart_money
 from ui import apply_style, navigate, sidebar_menu
 
 st.set_page_config(page_title='HP Screener', page_icon='📈', layout='wide')
@@ -26,3 +27,5 @@ if section == 'Dashboard':
     render_dashboard(navigate=navigate)
 elif section == 'Market Overview':
     render_market_overview(cached_idx_flow, cached_idx_heatmap)
+elif section == 'Smart Money Screener':
+    render_smart_money(navigate=navigate)

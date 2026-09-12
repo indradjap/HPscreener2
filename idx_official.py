@@ -344,3 +344,81 @@ def build_idx_heatmap_dataset(now: datetime | None = None) -> tuple[pd.DataFrame
     if metadata_error:
         note += " · sector metadata unavailable; fallback grouping used"
     return d, note
+
+
+def fetch_idx_market_history(
+    sessions: int = 20,
+    now: datetime | None = None,
+    max_calendar_days: int = 45,
+) -> pd.DataFrame:
+    """Fetch recent whole-market IDX daily summaries for smart-money screening.
+
+    Uses one warmed browser-like IDX session for the primary host, so the screener does
+    not re-prime cookies for every historical trading date. Missing/failed dates fall
+    back to the normal multi-host request path.
+    """
+    if sessions < 1 or sessions > 60:
+        raise ValueError("sessions must be between 1 and 60")
+    now = now or datetime.now(ZoneInfo("Asia/Jakarta"))
+    frames: list[pd.DataFrame] = []
+    errors: list[str] = []
+    sess = _Session()
+    base = BASES[0]
+    sess.warm(base)
+
+    for offset in range(max_calendar_days + 1):
+        day = now.date() - timedelta(days=offset)
+        if day.weekday() >= 5:
+            continue
+        date_str = day.strftime("%Y%m%d")
+        path = "/primary/TradingSummary/GetStockSummary?" + urlencode({"date": date_str})
+        try:
+            try:
+                raw = sess.get(base + path)
+                rows = raw.get("data") if isinstance(raw, dict) else None
+                if not isinstance(rows, list) or not rows:
+                    d = pd.DataFrame()
+                else:
+                    # Reuse the canonical parser by constructing the same dataframe fields.
+                    out = []
+                    for item in rows:
+                        code = str(item.get("StockCode", "")).strip().upper()
+                        if not re.fullmatch(r"[A-Z0-9]{4}", code):
+                            continue
+                        previous = _number(item.get("Previous"))
+                        close = _number(item.get("Close"))
+                        change = _number(item.get("Change"))
+                        pct = (change / previous * 100.0) if previous else 0.0
+                        listed = _number(item.get("ListedShares"))
+                        out.append({
+                            "Symbol": code,
+                            "CompanySummary": str(item.get("StockName") or code),
+                            "Date": str(item.get("Date") or day.isoformat()),
+                            "Previous": previous,
+                            "Close": close,
+                            "Change": change,
+                            "ChangePct": pct,
+                            "Volume": _number(item.get("Volume")),
+                            "TradedValue": _number(item.get("Value")),
+                            "Frequency": _number(item.get("Frequency")),
+                            "ForeignBuy": _number(item.get("ForeignBuy")),
+                            "ForeignSell": _number(item.get("ForeignSell")),
+                            "ListedShares": listed,
+                            "CalculatedMarketCap": close * listed if close > 0 and listed > 0 else 0.0,
+                        })
+                    d = pd.DataFrame(out)
+            except Exception:
+                d = _stock_summary_for_date(day)
+            if d.empty:
+                continue
+            d = d.copy()
+            d["SessionDate"] = pd.Timestamp(day)
+            frames.append(d)
+            if len(frames) >= sessions:
+                break
+        except Exception as exc:
+            errors.append(f"{day}: {str(exc)[:100]}")
+    if not frames:
+        raise IDXProviderError("No IDX market history found. " + " | ".join(errors[-3:]))
+    out = pd.concat(reversed(frames), ignore_index=True)
+    return out.sort_values(["SessionDate", "Symbol"]).reset_index(drop=True)

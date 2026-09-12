@@ -31,3 +31,14 @@ Removed the `WORKSPACE` navigation group label. Dashboard and Market Overview no
 
 ## Top Movers addition
 Market Overview now adds a native Top Movers card below investor flow and the heatmap. It uses the same official IDX daily stock summary already loaded by the heatmap; no new provider is required. Tabs: Top Gainer, Top Loser, Top Value, Top Volume, Top Frequency.
+
+## Smart Money Screener v1
+
+A third menu adds four functioning screening models on the bundled Quality 200 universe:
+Foreign Accumulation, Money Flow Accumulation, Technical Breakout, and Smart Money + Technical.
+Yahoo 2-year daily OHLCV supplies MA20/50/200, RSI, Stoch RSI, VWAP20, CMF20, OBV, MACD,
+relative volume and breakouts. Recent whole-market IDX daily summaries provide directional
+foreign-buy/foreign-sell imbalance when the public IDX endpoint is available. Results are cached
+for 30 minutes. Saved screens are session-only. The foreign metric is expressed as a normalized
+imbalance percentage so the UI does not assume a monetary unit for fields whose public endpoint
+metadata does not explicitly expose one.
