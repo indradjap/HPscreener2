@@ -85,11 +85,15 @@ def _fmt_volume(value: float) -> str:
     return f'{value:,.0f}'
 
 
-def _stock_chart(frame: pd.DataFrame, symbol: str) -> go.Figure:
+def _stock_chart(frame: pd.DataFrame, symbol: str, indicators: list[str] | tuple[str, ...] | None = None) -> go.Figure:
     frame = frame.copy()
     frame['ma20'] = frame['close'].rolling(20, min_periods=1).mean()
     frame['ma50'] = frame['close'].rolling(50, min_periods=1).mean()
     frame['ma200'] = frame['close'].rolling(200, min_periods=1).mean()
+    typical_price = (frame['high'] + frame['low'] + frame['close']) / 3.0
+    vol_cum = frame['volume'].cumsum().replace(0, pd.NA)
+    frame['vwap'] = (typical_price * frame['volume']).cumsum() / vol_cum
+    indicators = list(indicators or [])
 
     last_close = float(frame.close.iloc[-1])
     volume_colors = [
@@ -119,33 +123,26 @@ def _stock_chart(frame: pd.DataFrame, symbol: str) -> go.Figure:
         row=1,
         col=1,
     )
-    fig.add_trace(
-        go.Scatter(
-            x=frame.date, y=frame.ma20, mode='lines', name='MA20',
-            line=dict(color='#2f80ed', width=1.8),
-            hovertemplate='MA20: %{y:,.2f}<extra></extra>'
-        ),
-        row=1,
-        col=1,
-    )
-    fig.add_trace(
-        go.Scatter(
-            x=frame.date, y=frame.ma50, mode='lines', name='MA50',
-            line=dict(color='#f2994a', width=1.8),
-            hovertemplate='MA50: %{y:,.2f}<extra></extra>'
-        ),
-        row=1,
-        col=1,
-    )
-    fig.add_trace(
-        go.Scatter(
-            x=frame.date, y=frame.ma200, mode='lines', name='MA200',
-            line=dict(color='#9b51e0', width=1.8),
-            hovertemplate='MA200: %{y:,.2f}<extra></extra>'
-        ),
-        row=1,
-        col=1,
-    )
+    overlays = [
+        ('MA20', 'ma20', '#2f80ed'),
+        ('MA50', 'ma50', '#f2994a'),
+        ('MA200', 'ma200', '#9b51e0'),
+        ('VWAP', 'vwap', '#c039a1'),
+    ]
+    for label, col_name, color in overlays:
+        if label in indicators:
+            fig.add_trace(
+                go.Scatter(
+                    x=frame.date,
+                    y=frame[col_name],
+                    mode='lines',
+                    name=label,
+                    line=dict(color=color, width=1.9),
+                    hovertemplate=f'{label}: %{{y:,.2f}}<extra></extra>',
+                ),
+                row=1,
+                col=1,
+            )
     fig.add_trace(
         go.Bar(x=frame.date, y=frame.volume, name='Volume', marker_color=volume_colors, showlegend=False),
         row=2,
@@ -173,10 +170,10 @@ def _stock_chart(frame: pd.DataFrame, symbol: str) -> go.Figure:
         borderpad=4,
     )
     fig.update_layout(
-        height=525,
+        height=530,
         template='plotly_white',
         margin=dict(l=5, r=8, t=8, b=5),
-        showlegend=True,
+        showlegend=bool(indicators),
         legend=dict(
             orientation='h', yanchor='bottom', y=1.01, xanchor='left', x=0,
             bgcolor='rgba(255,255,255,0.85)', bordercolor='#e6ece8', borderwidth=1,
@@ -310,7 +307,17 @@ def render_dashboard(navigate=None) -> None:
                 unsafe_allow_html=True,
             )
 
-        st.plotly_chart(_stock_chart(frame, symbol), width='stretch', config={'displayModeBar': False})
+        indicator_options = ['MA20', 'MA50', 'MA200', 'VWAP']
+        indicators = st.segmented_control(
+            'Indicators',
+            options=indicator_options,
+            default=['MA20', 'MA50', 'MA200', 'VWAP'],
+            selection_mode='multi',
+            label_visibility='collapsed',
+            key='dashboard_indicators',
+        ) or []
+
+        st.plotly_chart(_stock_chart(frame, symbol, indicators), width='stretch', config={'displayModeBar': False})
 
         if st.session_state.get('dashboard_show_details', False):
             with st.expander('Latest daily bars', expanded=True):
