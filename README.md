@@ -1,47 +1,31 @@
-# HP Screener — Streamlit deployment package
+# HP Screener — menu-router fixed edition
 
-This folder is the deployable repository root. Do not rename files and do not upload duplicate `(1)` copies beside them.
+This build fixes the grouped sidebar navigation so menu state remains deterministic on Streamlit reruns.
 
-## Required GitHub root
+## Menu fixes
 
-```
-app.py
-market.py
-yahoo.py
-yahoo_download.py
-ui.py
-style.css
-idx_quality_200.csv
-requirements.txt
-.streamlit/config.toml
-```
+- Sidebar buttons now use an explicit click -> route state -> `st.rerun()` flow instead of callback-only navigation.
+- The app no longer uses global `st.stop()` calls for missing Yahoo/CSV data.
+- Data-dependent pages remain navigable and show a clear Market Data Required state when no prices are loaded.
+- Independent pages remain fully usable without market data: HP Desk, Stock Universe, Trading Journal, Risk Calculator, Average Price, Saved Screens.
+- A `Use Demo data now` action is available from gated market pages.
+- Watchlist/chart/screener shortcuts continue to route through the same central page state.
 
-`test_app.py`, `test_yahoo.py`, and `deploy_check.py` are optional for deployment but included for validation.
+## Deploy
 
-## Streamlit Community Cloud
+Upload the *contents* of this folder to the root of the GitHub repository. Keep `app.py` as the Streamlit entrypoint.
 
-1. Push **the contents of this folder** to the root of one GitHub repository.
-2. Confirm the repository has exactly `app.py` (not `app(1).py`) and `requirements.txt` (not `requirements(1).txt`).
-3. Deploy with entrypoint `app.py`.
-4. Python 3.12 is the safest default. The pinned dependency set is also selected to have Python 3.14-compatible distributions as of September 2026.
-5. Do not add the older HP package files to the same root; mixed old/new `market.py` or `yahoo.py` files can cause import errors.
+Required root files include `app.py`, `ui.py`, `style.css`, `market.py`, `yahoo.py`, `yahoo_download.py`, `idx_quality_200.csv`, and `requirements.txt`.
 
-## Local validation
+Run the package check locally with:
 
 ```bash
 python deploy_check.py
+```
+
+Start locally with:
+
+```bash
 python -m pip install -r requirements.txt
 python -m streamlit run app.py
 ```
-
-Optional tests:
-
-```bash
-python -m unittest test_app test_yahoo -v
-```
-
-## Data notes
-
-- `Quality 200` is the bundled static 200-name selection, not an official IDX index.
-- Yahoo data is downloaded through `yfinance`; availability/rate limits depend on Yahoo and the hosting network.
-- Yahoo failures are reported rather than silently replaced with demo prices.

@@ -1,6 +1,6 @@
 from pathlib import Path
 import hashlib
-from ui import sidebar_menu, apply_style, navigate, open_stock
+from ui import sidebar_menu, apply_style, navigate, open_stock, open_saved_screen, DATA_PAGES
 import json
 import pandas as pd
 import plotly.graph_objects as go
@@ -11,114 +11,160 @@ from yahoo import normalize_symbols, fetch_universe, quality_universe
 
 st.set_page_config(page_title='HP Screener', page_icon='📈', layout='wide')
 apply_style()
-for key,value in dict(watchlist=['BBCA','ISAT'],notes={},journal=[],saved_rules={}).items():
-    if key not in st.session_state: st.session_state[key]=value
+for key, value in dict(watchlist=['BBCA', 'ISAT'], notes={}, journal=[], saved_rules={}).items():
+    if key not in st.session_state:
+        st.session_state[key] = value
+
 
 @st.cache_data
-def demo_prices(): return demo()
+def demo_prices():
+    return demo()
+
+
 @st.cache_data
-def cached_scan(d): return scan(d)
+def cached_scan(d):
+    return scan(d)
+
 
 @st.cache_data(ttl=1800, show_spinner=False)
 def cached_yahoo(symbols, period, include_today, chunk_size):
     return fetch_universe(symbols, period, include_today, chunk_size)
 
+
 with st.sidebar:
-    section=sidebar_menu()
+    section = sidebar_menu()
     st.divider()
     with st.expander('Workspace backup'):
         st.caption('Watchlist, notes, journal and rules are session-only. Download a backup before closing. Imported prices are not included.')
-        payload={k:st.session_state[k] for k in ('watchlist','notes','journal','saved_rules')}
-        st.download_button('Download workspace',json.dumps(payload,indent=2).encode(),'hp-workspace.json','application/json')
-        restore=st.file_uploader('Restore workspace',type=['json'])
-        if st.button('Restore backup',disabled=restore is None):
+        payload = {k: st.session_state[k] for k in ('watchlist', 'notes', 'journal', 'saved_rules')}
+        st.download_button('Download workspace', json.dumps(payload, indent=2).encode(), 'hp-workspace.json', 'application/json')
+        restore = st.file_uploader('Restore workspace', type=['json'])
+        if st.button('Restore backup', disabled=restore is None):
             try:
-                x=json.loads(restore.getvalue())
-                assert isinstance(x.get('watchlist'),list) and all(isinstance(v,str) for v in x['watchlist'])
-                assert isinstance(x.get('notes'),dict) and all(isinstance(k,str) and isinstance(v,str) for k,v in x['notes'].items())
-                assert isinstance(x.get('journal'),list)
+                x = json.loads(restore.getvalue())
+                assert isinstance(x.get('watchlist'), list) and all(isinstance(v, str) for v in x['watchlist'])
+                assert isinstance(x.get('notes'), dict) and all(isinstance(k, str) and isinstance(v, str) for k, v in x['notes'].items())
+                assert isinstance(x.get('journal'), list)
                 for t in x['journal']:
-                    assert set(t)=={'Date','Symbol','Entry','Exit','Lots','Fees','PnL'}
-                    assert isinstance(t['Symbol'],str) and isinstance(t['Date'],str)
-                    for f in ('Entry','Exit','Lots','Fees','PnL'): assert isinstance(t[f],(int,float)) and abs(t[f])<1e15
-                assert isinstance(x.get('saved_rules'),dict)
+                    assert set(t) == {'Date', 'Symbol', 'Entry', 'Exit', 'Lots', 'Fees', 'PnL'}
+                    assert isinstance(t['Symbol'], str) and isinstance(t['Date'], str)
+                    for f in ('Entry', 'Exit', 'Lots', 'Fees', 'PnL'):
+                        assert isinstance(t[f], (int, float)) and abs(t[f]) < 1e15
+                assert isinstance(x.get('saved_rules'), dict)
                 for r in x['saved_rules'].values():
-                    assert {'min_rsi','max_rsi','rel_volume','trend','breakout','golden'}.issubset(r)
-                    assert 0<=r.get('liquidity',0)<=10000 and isinstance(r.get('stoch_cross',False),bool)
-                    assert 0<=r['min_rsi']<=r['max_rsi']<=100 and 0<=r['rel_volume']<=100
-                    assert all(isinstance(r[k],bool) for k in ('trend','breakout','golden'))
-                for k in payload: st.session_state[k]=x[k]
+                    assert {'min_rsi', 'max_rsi', 'rel_volume', 'trend', 'breakout', 'golden'}.issubset(r)
+                    assert 0 <= r.get('liquidity', 0) <= 10000 and isinstance(r.get('stoch_cross', False), bool)
+                    assert 0 <= r['min_rsi'] <= r['max_rsi'] <= 100 and 0 <= r['rel_volume'] <= 100
+                    assert all(isinstance(r[k], bool) for k in ('trend', 'breakout', 'golden'))
+                for k in payload:
+                    st.session_state[k] = x[k]
                 st.rerun()
-            except (ValueError,AssertionError,KeyError,TypeError): st.error('Invalid workspace backup.')
+            except (ValueError, AssertionError, KeyError, TypeError):
+                st.error('Invalid workspace backup.')
 
-st.markdown('<div class="hp-top"><span>HP SCREENER &nbsp; / &nbsp; IDX WORKSPACE</span><span class="hp-pill">● Daily research</span></div>',unsafe_allow_html=True)
+st.markdown('<div class="hp-top"><span>HP SCREENER &nbsp; / &nbsp; IDX WORKSPACE</span><span class="hp-pill">● Daily research</span></div>', unsafe_allow_html=True)
 st.title(section)
-with st.expander('Market data · Fetch, import & refresh',expanded='yahoo_bundle' not in st.session_state and st.session_state.get('price_source','Yahoo Finance')=='Yahoo Finance'):
-    source=st.selectbox('Price input',['Yahoo Finance','CSV upload','Demo'],key='price_source')
-    if source=='Yahoo Finance':
-        universe=st.selectbox('Universe',['Quality 200','Quick test (18)','Custom tickers'])
-        if universe=='Custom tickers':
-            tickers=st.text_area('IDX tickers',value=', '.join(SYMBOLS),help='Separate with commas or spaces. BBCA and BBCA.JK both work. Up to 250 tickers.')
-        else: tickers=', '.join(quality_universe() if universe=='Quality 200' else SYMBOLS)
-        st.caption(f'{len(normalize_symbols(tickers)) if universe!="Custom tickers" else "Custom"} tickers · Quality 200 is the bundled selection, not an official index.')
-        chunk_size=st.select_slider('Download batch size',options=[20,40,60,80,100],value=60)
-        history=st.selectbox('Price history',['1y','2y','5y'],index=1)
-        include_today=st.checkbox('Include today’s daily bar',value=False,help='Today can be incomplete. By default all bars dated today in Jakarta are excluded, even after market close.')
+
+# Market-data controls stay available on every page, but missing data no longer stops
+# the whole app. The router remains usable and only data-dependent page content is gated.
+with st.expander('Market data · Fetch, import & refresh', expanded=False):
+    source = st.selectbox('Price input', ['Yahoo Finance', 'CSV upload', 'Demo'], key='price_source')
+    if source == 'Yahoo Finance':
+        universe = st.selectbox('Universe', ['Quality 200', 'Quick test (18)', 'Custom tickers'], key='market_universe')
+        if universe == 'Custom tickers':
+            tickers = st.text_area('IDX tickers', value=', '.join(SYMBOLS), help='Separate with commas or spaces. BBCA and BBCA.JK both work. Up to 250 tickers.', key='custom_tickers')
+        else:
+            tickers = ', '.join(quality_universe() if universe == 'Quality 200' else SYMBOLS)
+        try:
+            ticker_count = len(normalize_symbols(tickers)) if universe != 'Custom tickers' else 'Custom'
+        except ValueError:
+            ticker_count = 'Invalid'
+        st.caption(f'{ticker_count} tickers · Quality 200 is the bundled selection, not an official index.')
+        chunk_size = st.select_slider('Download batch size', options=[20, 40, 60, 80, 100], value=60, key='chunk_size')
+        history = st.selectbox('Price history', ['1y', '2y', '5y'], index=1, key='history')
+        include_today = st.checkbox('Include today’s daily bar', value=False, help='Today can be incomplete. By default all bars dated today in Jakarta are excluded, even after market close.', key='include_today')
         st.caption('Yahoo daily data · unadjusted OHLC · 30-minute cache · may be delayed')
-        refresh=st.checkbox('Bypass cached prices on next fetch',value=False)
-        if st.button('Fetch & scan',type='primary'):
+        refresh = st.checkbox('Bypass cached prices on next fetch', value=False, key='refresh_prices')
+        if st.button('Fetch & scan', type='primary', key='fetch_scan'):
             try:
-                requested=normalize_symbols(tickers)
-                if refresh: cached_yahoo.clear()
+                requested = normalize_symbols(tickers)
+                if refresh:
+                    cached_yahoo.clear()
                 with st.spinner(f'Downloading {len(requested)} tickers in batches of {chunk_size}; retrying missing tickers…'):
-                    bundle=cached_yahoo(requested,history,include_today,chunk_size)
-                st.session_state.yahoo_bundle=bundle
-                st.session_state.yahoo_request=(requested,history,include_today)
-            except ValueError as exc: st.error(str(exc))
+                    bundle = cached_yahoo(requested, history, include_today, chunk_size)
+                st.session_state.yahoo_bundle = bundle
+                st.session_state.yahoo_request = (requested, history, include_today)
+                st.rerun()
+            except ValueError as exc:
+                st.error(str(exc))
     with st.expander('Import price CSV'):
         st.caption('Daily OHLCV, at least 60 rows per ticker. Select CSV upload above to use this universe for this session.')
-        upload=st.file_uploader('Prices',type=['csv'],key='prices_upload')
-        st.download_button('Download example CSV',demo_prices().to_csv(index=False).encode(),'hp-demo-prices.csv','text/csv')
-independent=['HP Desk', 'Stock Universe', 'Trading Journal', 'Risk Calculator', 'Average Price', 'Saved Screens']
-if section in independent:
-    prices=pd.DataFrame({"symbol":list(quality_universe())})
-    results=pd.DataFrame()
-else:
-    prices=demo_prices(); mode='DEMO · Synthetic prices, not live market data'
-    if source=='Yahoo Finance':
-        if 'yahoo_bundle' not in st.session_state:
-            st.markdown('<div class="hp-empty"><div class="hp-kicker" style="color:#9fcbb0">WELCOME TO HP</div><h2>A clearer view of your market.</h2><p>Fetch your 200-stock universe to explore charts, discover setups and build your watchlist. Open Market data above to get started.</p></div>',unsafe_allow_html=True)
-            st.stop()
-        prices,report,fetched_at=st.session_state.yahoo_bundle
-        request=st.session_state.yahoo_request
-        try: changed=(normalize_symbols(tickers),history,include_today)!=request
-        except ValueError: changed=True
+        upload = st.file_uploader('Prices', type=['csv'], key='prices_upload')
+        st.download_button('Download example CSV', demo_prices().to_csv(index=False).encode(), 'hp-demo-prices.csv', 'text/csv')
+
+# Resolve a data context without terminating the Streamlit script.
+data_ready = True
+data_message = ''
+mode = ''
+prices = pd.DataFrame()
+results = pd.DataFrame()
+
+if section not in DATA_PAGES:
+    # Utility/research pages need symbols, not live OHLCV.
+    prices = pd.DataFrame({'symbol': list(quality_universe())})
+elif source == 'Demo':
+    prices = demo_prices()
+    mode = 'DEMO · Synthetic prices, not live market data'
+elif source == 'CSV upload':
+    if upload is None:
+        data_ready = False
+        data_message = 'Upload a price CSV in Market data, or switch Price input to Demo/Yahoo Finance.'
+    else:
+        try:
+            prices = parse_csv(upload.getvalue())
+            mode = 'IMPORTED · User-supplied daily prices'
+        except Exception as exc:
+            data_ready = False
+            data_message = f'Import failed: {exc}'
+elif source == 'Yahoo Finance':
+    if 'yahoo_bundle' not in st.session_state:
+        data_ready = False
+        data_message = 'No Yahoo market data has been fetched yet. Open Market data and click Fetch & scan.'
+    else:
+        prices, report, fetched_at = st.session_state.yahoo_bundle
+        request = st.session_state.get('yahoo_request')
+        changed = False
+        try:
+            current_request = (normalize_symbols(tickers), history, include_today)
+            changed = request is not None and current_request != request
+        except (ValueError, NameError):
+            changed = True
         if changed:
             st.warning('Input settings have changed. Click Fetch & scan to apply them. Results below are from the previous fetch.')
-        good=int(report.Status.eq('OK').sum())
+        good = int(report.Status.eq('OK').sum()) if not report.empty else 0
         st.caption(f'Yahoo scan: {good} usable / {len(report)} requested · Retrieved {fetched_at}')
-        if good<len(report): st.warning(f'{len(report)-good} tickers failed or were stale and are excluded. Open Download report for details.')
-        with st.expander('Download report',expanded=good<len(report)):
-            st.dataframe(report,hide_index=True,width='stretch')
-            st.download_button('Export download report',report.to_csv(index=False).encode(),'hp-yahoo-report.csv','text/csv')
+        if good < len(report):
+            st.warning(f'{len(report)-good} tickers failed or were stale and are excluded. Open Download report for details.')
+        with st.expander('Download report', expanded=good < len(report)):
+            st.dataframe(report, hide_index=True, width='stretch')
+            st.download_button('Export download report', report.to_csv(index=False).encode(), 'hp-yahoo-report.csv', 'text/csv')
         if prices.empty:
-            st.error('No usable Yahoo prices. Check the download report and retry. No demo prices have been substituted.')
-            st.stop()
-        mode='YAHOO FINANCE · Unadjusted daily prices · May be delayed'
-        if request[2]: st.warning('Today’s bar is included and may still be incomplete. Signals can change.')
-        else: st.caption('Conservative daily scan: all bars dated today in Jakarta are excluded.')
-        st.download_button('Export fetched prices',prices.to_csv(index=False).encode(),'hp-yahoo-prices.csv','text/csv')
-    elif source=='CSV upload':
-        if upload is None:
-            st.info('Upload a price CSV using the Market data panel.'); st.stop()
-        try:
-            prices=parse_csv(upload.getvalue()); mode='IMPORTED · User-supplied daily prices'
-        except Exception as e:
-            st.error(f'Import failed: {e}'); st.stop()
-    results=cached_scan(prices)
+            data_ready = False
+            data_message = 'Yahoo returned no usable prices. Check the download report and retry.'
+        else:
+            mode = 'YAHOO FINANCE · Unadjusted daily prices · May be delayed'
+            if request and request[2]:
+                st.warning('Today’s bar is included and may still be incomplete. Signals can change.')
+            else:
+                st.caption('Conservative daily scan: all bars dated today in Jakarta are excluded.')
+            st.download_button('Export fetched prices', prices.to_csv(index=False).encode(), 'hp-yahoo-prices.csv', 'text/csv')
+
+if section in DATA_PAGES and data_ready:
+    results = cached_scan(prices)
     st.caption(mode)
     st.caption(f'{len(results)} tickers · Latest date {prices.date.max():%d %b %Y} · Daily bars · All currency values in IDR')
-    if results.Date.nunique()>1: st.warning('Tickers have different latest dates. Check the Date column before comparing results.')
+    if results.Date.nunique() > 1:
+        st.warning('Tickers have different latest dates. Check the Date column before comparing results.')
 
 def table(d,name='results'):
     st.dataframe(d,hide_index=True,width='stretch',column_config={k:st.column_config.NumberColumn(format='%.2f') for k in ['Close','ChangePct','RSI','RelVolume','CMF','AvgValue20B','StochK','StochD'] if k in d})
@@ -144,7 +190,16 @@ def chart():
         else: st.session_state.watchlist.append(symbol)
         st.rerun()
 
-if section=='Stock Universe':
+if section in DATA_PAGES and not data_ready:
+    st.markdown('<div class="hp-empty"><div class="hp-kicker" style="color:#9fcbb0">MARKET DATA REQUIRED</div><h2>This page is ready, but it needs price data.</h2><p>'+data_message+'</p></div>', unsafe_allow_html=True)
+    a, b = st.columns(2)
+    if a.button('Use Demo data now', type='primary', width='stretch', key='use_demo_now'):
+        st.session_state.price_source = 'Demo'
+        st.rerun()
+    if b.button('Open Dashboard', width='stretch', key='back_dashboard'):
+        navigate('Dashboard')
+        st.rerun()
+elif section=='Stock Universe':
     st.caption('Bundled Quality 200 selection · 80 Tier A / 70 Tier B / 50 Tier C · Not an official IDX index')
     directory=pd.read_csv(Path(__file__).with_name('idx_quality_200.csv'))
     a,b=st.columns([3,1]); query=a.text_input('Search ticker').strip().upper(); tier=b.selectbox('Tier',['All','A','B','C'])
@@ -159,9 +214,9 @@ elif section=='Saved Screens':
             st.subheader(name)
             st.write(f'RSI {rules["min_rsi"]}–{rules["max_rsi"]} · Volume ≥ {rules["rel_volume"]}× · Liquidity ≥ Rp{rules.get("liquidity",5):g}B')
             a,b=st.columns(2)
-            if a.button('Open screen',key='open_'+name):
-                st.session_state.requested_preset='Saved: '+name
-                navigate('Technical Screener'); st.rerun()
+            if a.button('Open screen', key='open_'+name):
+                open_saved_screen(name)
+                st.rerun()
             if b.button('Delete screen',key='delete_'+name):
                 del st.session_state.saved_rules[name];st.rerun()
 elif section=='Top Movers':
