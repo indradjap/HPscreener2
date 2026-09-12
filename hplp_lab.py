@@ -11,12 +11,42 @@ from idx_official import fetch_idx_market_history, fetch_stock_screener_metadata
 from yahoo_download import download_universe
 
 
-FACTOR_LABELS = {
-    "CMF": "CMF pressure",
-    "OBVSlope": "OBV slope",
-    "ValueAccel": "Value acceleration",
-    "RelVolume": "Relative volume",
-    "CloseLocation": "Close location",
+FORMULA_FACTORS = {
+    "HPLP v0.1 Core": {
+        "CMF": "CMF pressure",
+        "OBVSlope": "OBV slope",
+        "ValueAccel": "Value acceleration",
+        "RelVolume": "Relative volume",
+        "CloseLocation": "20D close location",
+    },
+    "HPLP v0.2 Directional": {
+        "CMF": "CMF / signed flow",
+        "OBVSlope": "OBV slope",
+        "ValueAccel": "Value acceleration",
+        "RelVolume": "Relative volume",
+        "ClosePressure": "Close pressure",
+        "UpDownVolume": "Up/down volume pressure",
+        "Absorption": "Price-impact absorption",
+    },
+}
+
+DEFAULT_WEIGHTS = {
+    "HPLP v0.1 Core": {
+        "CMF": 30.0,
+        "OBVSlope": 25.0,
+        "ValueAccel": 20.0,
+        "RelVolume": 15.0,
+        "CloseLocation": 10.0,
+    },
+    "HPLP v0.2 Directional": {
+        "CMF": 25.0,
+        "OBVSlope": 15.0,
+        "ValueAccel": 10.0,
+        "RelVolume": 5.0,
+        "ClosePressure": 15.0,
+        "UpDownVolume": 15.0,
+        "Absorption": 15.0,
+    },
 }
 
 
@@ -80,16 +110,19 @@ def _ticker_features(symbol: str, raw: pd.DataFrame) -> pd.DataFrame:
         return pd.DataFrame()
 
     d.index = pd.to_datetime(d.index)
-    c = d.Close
-    h = d.High
-    l = d.Low
+    c = d.Close.astype(float)
+    h = d.High.astype(float)
+    l = d.Low.astype(float)
     v = d.Volume.astype(float)
     value = c * v
 
-    typical_spread = (h - l).replace(0, np.nan)
-    mfv = ((((c - l) - (h - c)) / typical_spread).fillna(0.0)) * v
+    # CMF: volume-weighted close location; positive means closes skew toward highs.
+    spread = (h - l).replace(0, np.nan)
+    daily_clv = ((((c - l) - (h - c)) / spread).replace([np.inf, -np.inf], np.nan).fillna(0.0))
+    mfv = daily_clv * v
     d["CMF"] = mfv.rolling(20).sum() / v.rolling(20).sum().replace(0, np.nan)
 
+    # OBV slope normalized by typical 20D volume so cross-ticker ranking is more stable.
     direction = np.sign(c.diff()).fillna(0.0)
     obv = (direction * v).cumsum()
     volume_base = v.rolling(20).mean().replace(0, np.nan)
@@ -97,14 +130,36 @@ def _ticker_features(symbol: str, raw: pd.DataFrame) -> pd.DataFrame:
 
     avg5_value = value.rolling(5).mean()
     avg20_value = value.rolling(20).mean().replace(0, np.nan)
-    d["ValueAccel"] = avg5_value / avg20_value - 1.0
+    activity_ratio = avg5_value / avg20_value
+    d["ValueAccel"] = activity_ratio - 1.0
 
     prior_avg_vol20 = v.shift(1).rolling(20).mean().replace(0, np.nan)
     d["RelVolume"] = v / prior_avg_vol20
 
+    # v0.1 factor: current close location inside the trailing 20D range.
     lo20 = l.rolling(20).min()
     hi20 = h.rolling(20).max()
     d["CloseLocation"] = (c - lo20) / (hi20 - lo20).replace(0, np.nan)
+
+    # v0.2 directional factor: persistent closing pressure, not just one-day activity.
+    d["ClosePressure"] = daily_clv.rolling(10).mean()
+
+    # v0.2 directional factor: 20D up-volume minus down-volume, normalized by total volume.
+    signed_volume = np.sign(c.diff()).fillna(0.0) * v
+    d["UpDownVolume"] = (
+        signed_volume.rolling(20).sum()
+        / v.rolling(20).sum().replace(0, np.nan)
+    )
+
+    # v0.2 absorption factor: high recent activity + positive volume pressure + limited 5D price impact.
+    # High values aim to capture buying absorption before full price expansion.
+    ret5_abs_pct = ((c / c.shift(5) - 1.0).abs() * 100.0)
+    positive_pressure = ((d["UpDownVolume"].clip(-1, 1) + 1.0) / 2.0).clip(0, 1)
+    d["Absorption"] = (
+        activity_ratio.clip(lower=0.0)
+        * positive_pressure
+        / (1.0 + ret5_abs_pct / 5.0)
+    )
 
     d["AvgValueB"] = avg20_value / 1e9
     d["Return20"] = (c / c.shift(20) - 1.0) * 100.0
@@ -113,35 +168,33 @@ def _ticker_features(symbol: str, raw: pd.DataFrame) -> pd.DataFrame:
     d["BarIndex"] = np.arange(len(d), dtype=int)
     return d.reset_index(drop=True)
 
-
 def _cross_section_score(long_df: pd.DataFrame, weights: dict[str, float]) -> pd.DataFrame:
     d = long_df.copy()
-    factors = list(FACTOR_LABELS)
+    factors = [f for f, w in weights.items() if float(w) > 0]
+    if not factors:
+        raise ValueError("HPLP weights must be greater than zero.")
+
     for factor in factors:
+        if factor not in d.columns:
+            raise ValueError(f"Missing HPLP factor: {factor}")
         d[factor + "Pct"] = (
             d.groupby("Date")[factor]
             .rank(method="average", pct=True, na_option="keep")
             .mul(100.0)
         )
 
-    total_weight = sum(float(weights.get(f, 0.0)) for f in factors)
-    if total_weight <= 0:
-        raise ValueError("HPLP Core weights must be greater than zero.")
-
     numerator = 0.0
     denominator = 0.0
-    for f in factors:
-        w = float(weights.get(f, 0.0))
-        if w <= 0:
-            continue
-        pct = d[f + "Pct"]
+    for factor in factors:
+        w = float(weights[factor])
+        pct = d[factor + "Pct"]
         numerator = numerator + pct.fillna(0.0) * w
         denominator = denominator + pct.notna().astype(float) * w
+
     d["HPLP"] = numerator / denominator.replace(0, np.nan)
     d = d.sort_values(["Symbol", "Date"])
     d["HPLPDelta5"] = d.groupby("Symbol")["HPLP"].diff(5)
     return d
-
 
 def _forward_metrics(group: pd.DataFrame, horizon: int) -> pd.DataFrame:
     g = group.sort_values("Date").copy()
@@ -205,6 +258,44 @@ def _dedupe_signals(signals: pd.DataFrame, horizon: int) -> pd.DataFrame:
     return signals.loc[kept].sort_values("Date") if kept else signals.iloc[0:0].copy()
 
 
+def _cross_section_validation(eligible: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Evaluate HPLP ranking power independently of the selected signal threshold."""
+    rows = []
+    ic_rows = []
+    for date, g in eligible.groupby("Date"):
+        g = g.dropna(subset=["HPLP", "ForwardReturn"]).copy()
+        top = g[g.HPLP >= 80]
+        bottom = g[g.HPLP <= 20]
+        if len(top) >= 3 and len(bottom) >= 3:
+            rows.append({
+                "Date": pd.Timestamp(date),
+                "TopMedian": float(top.ForwardReturn.median()),
+                "BottomMedian": float(bottom.ForwardReturn.median()),
+                "Spread": float(top.ForwardReturn.median() - bottom.ForwardReturn.median()),
+            })
+        if len(g) >= 20:
+            ic = g[["HPLP", "ForwardReturn"]].corr(method="spearman").iloc[0, 1]
+            if pd.notna(ic):
+                ic_rows.append({"Date": pd.Timestamp(date), "RankIC": float(ic)})
+
+    spread = pd.DataFrame(rows)
+    ic_df = pd.DataFrame(ic_rows)
+    if spread.empty:
+        yearly_spread = pd.DataFrame(columns=["Year", "SpreadDays", "MedianSpread", "PositiveSpreadRate"])
+    else:
+        spread["Year"] = spread.Date.dt.year
+        yearly_spread = (
+            spread.groupby("Year")
+            .agg(
+                SpreadDays=("Spread", "size"),
+                MedianSpread=("Spread", "median"),
+                PositiveSpreadRate=("Spread", lambda x: (x > 0).mean() * 100),
+            )
+            .reset_index()
+        )
+    return spread, yearly_spread, ic_df
+
+
 def _build_backtest(
     frames: dict,
     *,
@@ -216,7 +307,7 @@ def _build_backtest(
     max_price_return: float,
     min_hplp_rise: float,
     dedupe: bool,
-) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     parts = []
     for yahoo_symbol, raw in frames.items():
         symbol = str(yahoo_symbol).replace(".JK", "")
@@ -228,7 +319,7 @@ def _build_backtest(
 
     d = pd.concat(parts, ignore_index=True)
     d = d[d.AvgValueB >= float(min_value_b)].copy()
-    factor_cols = list(FACTOR_LABELS)
+    factor_cols = [f for f, w in weights.items() if float(w) > 0]
     d = d.dropna(subset=factor_cols + ["Return20", "AvgValueB"])
     if d.empty:
         raise ValueError("No historical rows remain after liquidity/feature filters.")
@@ -238,6 +329,11 @@ def _build_backtest(
     for _, g in d.groupby("Symbol", sort=False):
         forward_parts.append(_forward_metrics(g, horizon))
     d = pd.concat(forward_parts, ignore_index=True)
+
+    # Evaluation benchmark: median forward return of all eligible names on the same date.
+    # This is used only for evaluation after the signal date; it is not part of the HPLP score.
+    d["BenchmarkReturn"] = d.groupby("Date")["ForwardReturn"].transform("median")
+    d["ExcessReturn"] = d["ForwardReturn"] - d["BenchmarkReturn"]
 
     if signal_type == "Bullish HPLP Divergence":
         mask = (
@@ -261,7 +357,9 @@ def _build_backtest(
         .agg(
             Observations=("ForwardReturn", "size"),
             MedianReturn=("ForwardReturn", "median"),
+            MedianExcess=("ExcessReturn", "median"),
             WinRate=("ForwardReturn", lambda x: (x > 0).mean() * 100),
+            BeatBenchmarkRate=("ExcessReturn", lambda x: (x > 0).mean() * 100),
             MedianMFE=("MFE", "median"),
             MedianMAE=("MAE", "median"),
         )
@@ -269,7 +367,10 @@ def _build_backtest(
     )
 
     if signals.empty:
-        yearly = pd.DataFrame(columns=["Year", "Signals", "MedianReturn", "WinRate", "Hit5Before3", "MedianMFE", "MedianMAE"])
+        yearly = pd.DataFrame(columns=[
+            "Year", "Signals", "MedianReturn", "MedianExcess", "WinRate",
+            "BeatBenchmarkRate", "Hit5Before3", "MedianMFE", "MedianMAE"
+        ])
     else:
         signals["Year"] = pd.to_datetime(signals.Date).dt.year
         yearly = (
@@ -277,15 +378,18 @@ def _build_backtest(
             .agg(
                 Signals=("ForwardReturn", "size"),
                 MedianReturn=("ForwardReturn", "median"),
+                MedianExcess=("ExcessReturn", "median"),
                 WinRate=("ForwardReturn", lambda x: (x > 0).mean() * 100),
+                BeatBenchmarkRate=("ExcessReturn", lambda x: (x > 0).mean() * 100),
                 Hit5Before3=("Hit5Before3", lambda x: x.dropna().mean() * 100 if x.notna().any() else np.nan),
                 MedianMFE=("MFE", "median"),
                 MedianMAE=("MAE", "median"),
             )
             .reset_index()
         )
-    return d, signals, bucket, yearly
 
+    spread, yearly_spread, ic_df = _cross_section_validation(eligible)
+    return d, signals, bucket, yearly, spread, yearly_spread, ic_df
 
 def _bucket_chart(bucket: pd.DataFrame, horizon: int) -> go.Figure:
     fig = go.Figure()
@@ -293,25 +397,36 @@ def _bucket_chart(bucket: pd.DataFrame, horizon: int) -> go.Figure:
         go.Bar(
             x=bucket.ScoreBucket.astype(str),
             y=bucket.MedianReturn,
+            name="Raw return",
             text=[f"{x:+.2f}%" for x in bucket.MedianReturn],
             textposition="outside",
-            hovertemplate="HPLP %{x}<br>Median return %{y:.2f}%<extra></extra>",
+            hovertemplate="HPLP %{x}<br>Median raw return %{y:.2f}%<extra></extra>",
+        )
+    )
+    fig.add_trace(
+        go.Bar(
+            x=bucket.ScoreBucket.astype(str),
+            y=bucket.MedianExcess,
+            name="Excess vs universe",
+            text=[f"{x:+.2f}%" for x in bucket.MedianExcess],
+            textposition="outside",
+            hovertemplate="HPLP %{x}<br>Median excess return %{y:.2f}%<extra></extra>",
         )
     )
     fig.add_hline(y=0, line_width=1, line_color="#c8cfcb")
     fig.update_layout(
-        height=360,
-        margin=dict(l=15, r=15, t=25, b=15),
+        height=390,
+        margin=dict(l=15, r=15, t=30, b=15),
         paper_bgcolor="white",
         plot_bgcolor="white",
-        showlegend=False,
+        barmode="group",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
         xaxis_title="HPLP score bucket",
-        yaxis_title=f"Median {horizon}D forward return (%)",
+        yaxis_title=f"Median {horizon}D return (%)",
     )
     fig.update_yaxes(gridcolor="#edf1ee", zeroline=False)
     fig.update_xaxes(showgrid=False)
     return fig
-
 
 def _pct(v: float) -> str:
     return "—" if pd.isna(v) else f"{v:.1f}%"
@@ -329,15 +444,18 @@ def render_hplp_lab() -> None:
     )
 
     st.markdown(
-        '<div class="hplp-note"><b>HPLP v0.1 Core</b> uses historical Yahoo OHLCV only. '
-        'Foreign Intensity is intentionally disabled for long-history backtests until a reliable historical IDX foreign archive is available.</div>',
+        '<div class="hplp-note"><b>HPLP v0.2 Directional</b> is designed to reduce the v0.1 activity/volatility bias. '
+        'It adds directional up/down-volume pressure and a price-impact absorption factor. Foreign Intensity remains disabled for long-history tests until a reliable historical IDX foreign archive is available.</div>',
         unsafe_allow_html=True,
     )
 
     with st.container(border=True):
         st.markdown('<div class="hplp-section-title">Backtest setup</div>', unsafe_allow_html=True)
         a, b, c, d = st.columns(4)
-        version = a.selectbox("Formula", ["HPLP v0.1 Core"], key="hplp_version")
+        version = a.selectbox(
+            "Formula", ["HPLP v0.2 Directional", "HPLP v0.1 Core"],
+            index=0, key="hplp_version"
+        )
         universe = b.selectbox("Universe", ["Quality 200", "All IDX (current liquid)"], key="hplp_universe")
         period = c.selectbox("History", ["2Y", "5Y"], index=0, key="hplp_period")
         horizon_label = d.selectbox("Forward horizon", ["5D", "10D", "20D", "60D"], index=2, key="hplp_horizon")
@@ -359,38 +477,57 @@ def render_hplp_lab() -> None:
     with st.container(border=True):
         st.markdown('<div class="hplp-section-title">Formula weights</div>', unsafe_allow_html=True)
         st.caption("Each factor is percentile-ranked against the eligible universe on the same trading date. Weights must total 100%.")
-        w1, w2, w3 = st.columns(3)
-        cmf_w = w1.number_input("CMF pressure %", 0, 100, 30, 5, key="hplp_w_cmf")
-        obv_w = w2.number_input("OBV slope %", 0, 100, 25, 5, key="hplp_w_obv")
-        value_w = w3.number_input("Value acceleration %", 0, 100, 20, 5, key="hplp_w_value")
-        w4, w5, w6 = st.columns(3)
-        relvol_w = w4.number_input("Relative volume %", 0, 100, 15, 5, key="hplp_w_relvol")
-        close_w = w5.number_input("Close location %", 0, 100, 10, 5, key="hplp_w_close")
-        w6.number_input("Foreign intensity %", 0, 100, 0, 5, disabled=True, help="Reserved for HPLP+ when long historical foreign data is available.", key="hplp_w_foreign")
 
-        weights = {
-            "CMF": float(cmf_w),
-            "OBVSlope": float(obv_w),
-            "ValueAccel": float(value_w),
-            "RelVolume": float(relvol_w),
-            "CloseLocation": float(close_w),
-        }
+        if version == "HPLP v0.1 Core":
+            defaults = DEFAULT_WEIGHTS[version]
+            w1, w2, w3 = st.columns(3)
+            cmf_w = w1.number_input("CMF pressure %", 0, 100, int(defaults["CMF"]), 5, key="hplp_v1_w_cmf")
+            obv_w = w2.number_input("OBV slope %", 0, 100, int(defaults["OBVSlope"]), 5, key="hplp_v1_w_obv")
+            value_w = w3.number_input("Value acceleration %", 0, 100, int(defaults["ValueAccel"]), 5, key="hplp_v1_w_value")
+            w4, w5, w6 = st.columns(3)
+            relvol_w = w4.number_input("Relative volume %", 0, 100, int(defaults["RelVolume"]), 5, key="hplp_v1_w_relvol")
+            close_w = w5.number_input("20D close location %", 0, 100, int(defaults["CloseLocation"]), 5, key="hplp_v1_w_close")
+            w6.number_input("Foreign intensity %", 0, 100, 0, 5, disabled=True, key="hplp_v1_w_foreign")
+            weights = {
+                "CMF": float(cmf_w), "OBVSlope": float(obv_w),
+                "ValueAccel": float(value_w), "RelVolume": float(relvol_w),
+                "CloseLocation": float(close_w),
+            }
+        else:
+            defaults = DEFAULT_WEIGHTS[version]
+            w1, w2, w3, w4 = st.columns(4)
+            cmf_w = w1.number_input("CMF / signed flow %", 0, 100, int(defaults["CMF"]), 5, key="hplp_v2_w_cmf")
+            obv_w = w2.number_input("OBV slope %", 0, 100, int(defaults["OBVSlope"]), 5, key="hplp_v2_w_obv")
+            closep_w = w3.number_input("Close pressure %", 0, 100, int(defaults["ClosePressure"]), 5, key="hplp_v2_w_closep")
+            updown_w = w4.number_input("Up/down volume %", 0, 100, int(defaults["UpDownVolume"]), 5, key="hplp_v2_w_updown")
+            w5, w6, w7, w8 = st.columns(4)
+            absorption_w = w5.number_input("Absorption %", 0, 100, int(defaults["Absorption"]), 5, key="hplp_v2_w_absorption")
+            value_w = w6.number_input("Value acceleration %", 0, 100, int(defaults["ValueAccel"]), 5, key="hplp_v2_w_value")
+            relvol_w = w7.number_input("Relative volume %", 0, 100, int(defaults["RelVolume"]), 5, key="hplp_v2_w_relvol")
+            w8.number_input("Foreign intensity %", 0, 100, 0, 5, disabled=True, key="hplp_v2_w_foreign")
+            weights = {
+                "CMF": float(cmf_w), "OBVSlope": float(obv_w),
+                "ClosePressure": float(closep_w), "UpDownVolume": float(updown_w),
+                "Absorption": float(absorption_w), "ValueAccel": float(value_w),
+                "RelVolume": float(relvol_w),
+            }
+            st.caption(
+                "v0.2 factors: Close Pressure = 10D average daily close-location pressure; "
+                "Up/Down Volume = 20D signed volume balance; Absorption = recent traded-value activity × positive volume pressure ÷ 5D price impact."
+            )
+
         total = int(sum(weights.values()))
         total_class = "ok" if total == 100 else "bad"
         st.markdown(f'<div class="hplp-weight-total {total_class}">Total core weight: <b>{total}%</b></div>', unsafe_allow_html=True)
 
         run = st.button(
-            "Run backtest",
-            icon=":material/science:",
-            type="primary",
-            width="stretch",
-            disabled=(total != 100),
-            key="hplp_run",
+            "Run backtest", icon=":material/science:", type="primary", width="stretch",
+            disabled=(total != 100), key="hplp_run",
         )
 
     if universe.startswith("All IDX"):
         st.warning(
-            "All IDX v0.1 uses today’s listed/liquid universe as the historical sample. This is useful for research but has survivorship/current-listing bias. Quality 200 is the cleaner first calibration universe."
+            "All IDX uses today’s listed/liquid universe as the historical sample. This is useful for research but has survivorship/current-listing bias. Quality 200 remains the cleaner first calibration universe."
         )
 
     if run:
@@ -409,7 +546,7 @@ def render_hplp_lab() -> None:
 
             frames, errors = _cached_history(symbols, period_code)
             try:
-                _, signals, bucket, yearly = _build_backtest(
+                _, signals, bucket, yearly, spread, yearly_spread, ic_df = _build_backtest(
                     frames,
                     weights=weights,
                     min_value_b=float(min_value),
@@ -425,26 +562,20 @@ def render_hplp_lab() -> None:
                 return
 
         st.session_state["hplp_lab_result"] = {
-            "signals": signals,
-            "bucket": bucket,
-            "yearly": yearly,
-            "horizon": horizon,
-            "universe": universe,
-            "requested": len(symbols),
-            "usable": len(frames),
-            "failed": len(errors),
-            "history": period,
-            "signal_type": signal_type,
-            "threshold": threshold,
-            "min_value": min_value,
-            "weights": weights.copy(),
+            "signals": signals, "bucket": bucket, "yearly": yearly,
+            "spread": spread, "yearly_spread": yearly_spread, "ic_df": ic_df,
+            "horizon": horizon, "universe": universe,
+            "requested": len(symbols), "usable": len(frames), "failed": len(errors),
+            "history": period, "signal_type": signal_type, "threshold": threshold,
+            "min_value": min_value, "weights": weights.copy(), "version": version,
             "universe_status": universe_status,
         }
 
     bundle = st.session_state.get("hplp_lab_result")
     if bundle is None:
         st.markdown(
-            '<div class="hplp-empty"><b>Ready to test HPLP v0.1.</b><span>Adjust the formula, choose a horizon, then run the backtest. The lab does not change the live Smart Money Screener.</span></div>',
+            '<div class="hplp-empty"><b>Ready to test HPLP v0.2.</b>'
+            '<span>Run v0.2 first, then compare the same setup with v0.1. The lab does not change the live Smart Money Screener.</span></div>',
             unsafe_allow_html=True,
         )
         return
@@ -452,11 +583,15 @@ def render_hplp_lab() -> None:
     signals = bundle["signals"]
     bucket = bundle["bucket"]
     yearly = bundle["yearly"]
+    spread = bundle.get("spread", pd.DataFrame())
+    yearly_spread = bundle.get("yearly_spread", pd.DataFrame())
+    ic_df = bundle.get("ic_df", pd.DataFrame())
     horizon = int(bundle["horizon"])
     result_universe = bundle["universe"]
+    result_version = bundle.get("version", "HPLP")
 
     st.markdown(
-        f'<div class="hplp-status">Last run · {result_universe} · {bundle["history"]} history · '
+        f'<div class="hplp-status">Last run · {result_version} · {result_universe} · {bundle["history"]} history · '
         f'HPLP ≥ {bundle["threshold"]} · <b>{bundle["requested"]}</b> requested · '
         f'<b>{bundle["usable"]}</b> Yahoo histories usable · <b>{bundle["failed"]}</b> failed</div>',
         unsafe_allow_html=True,
@@ -478,12 +613,36 @@ def render_hplp_lab() -> None:
         for col, (label, value) in zip(cols, metrics.items()):
             col.metric(label, value)
 
+        st.markdown('<div class="hplp-section-title" style="margin-top:18px">Relative-edge validation</div>', unsafe_allow_html=True)
+        median_spread = spread.Spread.median() if not spread.empty else np.nan
+        positive_spread = (spread.Spread > 0).mean() * 100 if not spread.empty else np.nan
+        median_ic = ic_df.RankIC.median() if not ic_df.empty else np.nan
+        positive_ic = (ic_df.RankIC > 0).mean() * 100 if not ic_df.empty else np.nan
+        research_metrics = {
+            "Median Excess Return": _num(signals.ExcessReturn.median()),
+            "Beat Universe Rate": _pct((signals.ExcessReturn > 0).mean() * 100),
+            "Top 20% − Bottom 20%": _num(median_spread),
+            "Positive Spread Days": _pct(positive_spread),
+            "Median Rank IC": "—" if pd.isna(median_ic) else f"{median_ic:+.3f}",
+            "Positive IC Days": _pct(positive_ic),
+        }
+        cols2 = st.columns(6)
+        for col, (label, value) in zip(cols2, research_metrics.items()):
+            col.metric(label, value)
+        st.caption(
+            "Benchmark = median forward return of the eligible universe on the same signal date. "
+            "Top−Bottom spread compares HPLP 80–100 vs 0–20. Rank IC is the daily Spearman relationship between HPLP and future returns."
+        )
+
     with st.container(border=True):
         st.markdown('<div class="hplp-section-title">Does a higher HPLP score lead to better forward returns?</div>', unsafe_allow_html=True)
         st.plotly_chart(_bucket_chart(bucket, horizon), width="stretch", config={"displayModeBar": False})
         display_bucket = bucket.copy()
-        display_bucket.columns = ["HPLP", "Observations", f"Median {horizon}D Return %", "Win Rate %", "Median MFE %", "Median MAE %"]
-        for col in [f"Median {horizon}D Return %", "Win Rate %", "Median MFE %", "Median MAE %"]:
+        display_bucket.columns = [
+            "HPLP", "Observations", f"Median {horizon}D Return %", "Median Excess %",
+            "Win Rate %", "Beat Universe %", "Median MFE %", "Median MAE %"
+        ]
+        for col in [f"Median {horizon}D Return %", "Median Excess %", "Win Rate %", "Beat Universe %", "Median MFE %", "Median MAE %"]:
             display_bucket[col] = display_bucket[col].round(2)
         st.dataframe(display_bucket, hide_index=True, width="stretch")
 
@@ -493,9 +652,21 @@ def render_hplp_lab() -> None:
             st.info("No yearly signal statistics are available for the current rule.")
         else:
             yd = yearly.copy()
-            yd.columns = ["Year", "Signals", f"Median {horizon}D Return %", "Win Rate %", "+5% before -3%", "Median MFE %", "Median MAE %"]
-            for col in [f"Median {horizon}D Return %", "Win Rate %", "+5% before -3%", "Median MFE %", "Median MAE %"]:
-                yd[col] = yd[col].round(2)
+            if not yearly_spread.empty:
+                yd = yd.merge(yearly_spread[["Year", "MedianSpread", "PositiveSpreadRate"]], on="Year", how="left")
+            else:
+                yd["MedianSpread"] = np.nan
+                yd["PositiveSpreadRate"] = np.nan
+            yd.columns = [
+                "Year", "Signals", f"Median {horizon}D Return %", "Median Excess %", "Win Rate %",
+                "Beat Universe %", "+5% before -3%", "Median MFE %", "Median MAE %",
+                "Top-Bottom Spread %", "Positive Spread Days %"
+            ]
+            for col in [
+                f"Median {horizon}D Return %", "Median Excess %", "Win Rate %", "Beat Universe %",
+                "+5% before -3%", "Median MFE %", "Median MAE %", "Top-Bottom Spread %", "Positive Spread Days %"
+            ]:
+                yd[col] = pd.to_numeric(yd[col], errors="coerce").round(2)
             st.dataframe(yd, hide_index=True, width="stretch")
 
     with st.container(border=True):
@@ -504,12 +675,22 @@ def render_hplp_lab() -> None:
             st.info("No signals to display.")
         else:
             sample = signals.sort_values(["Date", "HPLP"], ascending=[False, False]).head(100).copy()
-            sample = sample[["Date", "Symbol", "HPLP", "HPLPDelta5", "Return20", "AvgValueB", "ForwardReturn", "MFE", "MAE", "Hit5Before3"]]
-            sample.columns = ["Date", "Ticker", "HPLP", "HPLP Δ5", "Price 20D %", "Avg Value RpB", f"Forward {horizon}D %", "MFE %", "MAE %", "+5 before -3"]
-            for col in ["HPLP", "HPLP Δ5", "Price 20D %", "Avg Value RpB", f"Forward {horizon}D %", "MFE %", "MAE %"]:
+            sample = sample[[
+                "Date", "Symbol", "HPLP", "HPLPDelta5", "Return20", "AvgValueB",
+                "ForwardReturn", "ExcessReturn", "MFE", "MAE", "Hit5Before3"
+            ]]
+            sample.columns = [
+                "Date", "Ticker", "HPLP", "HPLP Δ5", "Price 20D %", "Avg Value RpB",
+                f"Forward {horizon}D %", "Excess vs Universe %", "MFE %", "MAE %", "+5 before -3"
+            ]
+            for col in [
+                "HPLP", "HPLP Δ5", "Price 20D %", "Avg Value RpB",
+                f"Forward {horizon}D %", "Excess vs Universe %", "MFE %", "MAE %"
+            ]:
                 sample[col] = pd.to_numeric(sample[col], errors="coerce").round(2)
             st.dataframe(sample, hide_index=True, width="stretch", height=420)
 
     st.caption(
-        "Research notes: features use information available up to each signal date; forward metrics use later bars. Same-day +5% and -3% touches are excluded because daily OHLC cannot reveal intraday order. All-IDX mode is current-listing biased in v0.1."
+        "Research notes: score factors use only information available up to each signal date. Forward return, benchmark, spread and Rank IC use later bars only for evaluation. Same-day +5% and -3% touches are excluded because daily OHLC cannot reveal intraday order. All-IDX mode remains current-listing biased."
     )
+

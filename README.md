@@ -72,3 +72,10 @@ HPLP v0.1 Core uses five historically available Yahoo OHLCV factors:
 Each factor is percentile-ranked cross-sectionally on each date before applying the user-defined weights. Historical foreign intensity is intentionally excluded in v0.1 because the current official IDX integration only supplies a short recent foreign-flow history. A future HPLP+ version can add it once a defensible long archive is available.
 
 Backtest outputs include forward return, MFE, MAE, +5% before -3%, score buckets, year-by-year stability, and optional de-duplication of overlapping signals. All-IDX mode uses the current listed/liquid universe and therefore has survivorship/current-listing bias; Quality 200 is the recommended first calibration universe.
+
+
+## HPLP Lab v0.2 Directional
+
+HPLP v0.2 keeps v0.1 available as a benchmark, but changes the default research model to a more directional pressure score. It adds 10-day close pressure, 20-day signed up/down-volume pressure, and a price-impact absorption factor designed to favor strong activity with positive volume pressure before full price expansion. Relative volume is deliberately reduced to a 5% default weight.
+
+Backtest validation now includes same-date universe excess return, beat-universe rate, HPLP 80–100 minus 0–20 forward-return spread, positive spread days, and daily Spearman Rank IC. These metrics test whether HPLP has cross-sectional ranking power even when the overall market is weak.
